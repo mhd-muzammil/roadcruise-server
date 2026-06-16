@@ -1,0 +1,52 @@
+{
+  "users": [
+    {
+      "name": "Admin Mohamed",
+      "email": "admin@roadcruise.com",
+      "password": "admin123",
+      "role": "admin",
+      "phone": "+91 99999 99999"
+    }
+  ],
+  "bookings": [
+    {
+      "id": "RC-BK-9182",
+      "name": "Mohamed Vaseem",
+      "phone": "+91 98765 43210",
+      "fromDate": "2026-06-20",
+      "toDate": "2026-06-25",
+      "tripType": "Round-trip",
+      "item": "BMW 5 Series (Imperial Gold)",
+      "fare": 2400,
+      "status": "Approved",
+      "paymentMethod": "Card",
+      "driver": "Arjun Singh"
+    },
+    {
+      "id": "RC-BK-8712",
+      "name": "Anand Krishnan",
+      "phone": "+91 99404 11223",
+      "fromDate": "2026-06-22",
+      "toDate": "2026-06-24",
+      "tripType": "Tour Package",
+      "item": "Chennai - Pondy - Munnar",
+      "fare": 4800,
+      "status": "Pending",
+      "paymentMethod": "UPI (anand@okaxis)",
+      "driver": "None"
+    },
+    {
+      "id": "RC-BK-7651",
+      "name": "Deepa Ramakrishnan",
+      "phone": "+91 98401 77651",
+      "fromDate": "2026-06-15",
+      "toDate": "2026-06-18",
+      "tripType": "One-way",
+      "item": "Mercedes-Benz E-Class",
+      "fare": 1800,
+      "status": "Completed",
+      "paymentMethod": "Card",
+      "driver": "Karthik Raja"
+    }
+  ]
+}
