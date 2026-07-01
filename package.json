@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:notifications": "node --test-concurrency=1 --test \"src/notifications/__tests__/*.test.js\"",
+    "test:payments": "node --test-concurrency=1 --test \"src/payments/__tests__/*.test.js\"",
+    "test:auth": "node --test-concurrency=1 --test \"src/auth/__tests__/*.test.js\""
   },
   "keywords": [],
   "author": "",
@@ -16,6 +19,18 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1"
+  },
+  "optionalDependencies": {
+    "nodemailer": "^6.9.14",
+    "twilio": "^5.3.0",
+    "bullmq": "^5.12.0",
+    "ioredis": "^5.4.1",
+    "razorpay": "^2.9.4",
+    "pdfkit": "^0.15.0",
+    "qrcode": "^1.5.4",
+    "google-auth-library": "^9.14.1",
+    "argon2": "^0.41.1",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

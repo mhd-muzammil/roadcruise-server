@@ -1,4 +1,11 @@
 import { readDb, writeDb } from "../utils/db.js";
+import {
+  notifyBookingCreated,
+  notifyBookingConfirmed,
+  notifyPaymentSuccessful,
+  notifyBookingCancelled,
+  notifyDriverAssigned,
+} from "../notifications/integration/hooks.js";
 
 export const getBookings = (req, res) => {
   const db = readDb();
@@ -28,6 +35,14 @@ export const createBooking = (req, res) => {
 
   db.bookings.unshift(newBooking);
   writeDb(db);
+
+  // Emit domain events to the notification engine (async, non-blocking).
+  notifyBookingCreated(newBooking);
+  if (newBooking.status === "Approved") {
+    notifyPaymentSuccessful(newBooking);
+    notifyBookingConfirmed(newBooking);
+  }
+
   res.status(211).json(newBooking);
 };
 
@@ -41,11 +56,29 @@ export const updateBooking = (req, res) => {
     return res.status(404).json({ error: "Booking not found" });
   }
 
+  const prevStatus = db.bookings[idx].status;
+  const prevDriver = db.bookings[idx].driver;
+
   if (status !== undefined) db.bookings[idx].status = status;
   if (driver !== undefined) db.bookings[idx].driver = driver;
 
   writeDb(db);
-  res.json(db.bookings[idx]);
+  const updated = db.bookings[idx];
+
+  // Emit lifecycle events only on actual transitions.
+  if (status !== undefined && status !== prevStatus) {
+    if (status === "Approved") {
+      notifyPaymentSuccessful(updated);
+      notifyBookingConfirmed(updated);
+    } else if (status === "Cancelled") {
+      notifyBookingCancelled(updated);
+    }
+  }
+  if (driver !== undefined && driver !== prevDriver && driver !== "None") {
+    notifyDriverAssigned(updated);
+  }
+
+  res.json(updated);
 };
 
 export const deleteBooking = (req, res) => {

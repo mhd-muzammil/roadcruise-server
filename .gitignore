@@ -51,3 +51,12 @@ temp
 *.pid
 *.seed
 *.pid.lock
+
+# Notification engine runtime data (JSON store — do not commit logs/PII)
+src/notifications/data/
+
+# Payment module runtime data (JSON store — do not commit transactions/PII)
+src/payments/data/
+
+# Auth module runtime data (sessions + audit trail — do not commit)
+src/auth/data/
