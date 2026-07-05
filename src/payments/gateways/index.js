@@ -1,6 +1,7 @@
 import { config } from "../config/payment.config.js";
 import { MockGateway } from "./MockGateway.js";
 import { RazorpayGateway } from "./RazorpayGateway.js";
+import { PhonePeGateway } from "./PhonePeGateway.js";
 
 /**
  * Gateway factory + registry. Selected by PAYMENT_PROVIDER. Mock is the default
@@ -10,7 +11,8 @@ import { RazorpayGateway } from "./RazorpayGateway.js";
 const REGISTRY = {
   mock: () => new MockGateway(),
   razorpay: () => new RazorpayGateway(),
-  // stripe / cashfree / phonepe / paypal -> register adapters here
+  phonepe: () => new PhonePeGateway(),
+  // stripe / cashfree / paypal -> register adapters here
 };
 
 let instance = null;

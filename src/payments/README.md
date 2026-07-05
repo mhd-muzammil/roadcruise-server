@@ -329,6 +329,44 @@ class PaymentGateway {
    ```
 3. Set `PAYMENT_PROVIDER=stripe`. **No PaymentService, booking, or API code changes.**
 
+### PhonePe (redirect gateway) — implemented
+
+PhonePe is the client's chosen gateway. Unlike Razorpay's browser-signature
+model, PhonePe is **redirect-based**, so it uses an additive path alongside the
+Razorpay flow (both coexist; selection is purely `PAYMENT_PROVIDER`).
+
+- **Signing:** `X-VERIFY = SHA256(<stringToSign> + saltKey) + "###" + saltIndex`
+  (salt-based PG API — no SDK, no OAuth). Helpers in `core/signature.js`
+  (`phonepeXVerify`, `verifyPhonePeXVerify`).
+- **Flow:** `createOrder` → PhonePe `/pg/v1/pay` returns a hosted checkout URL,
+  surfaced as `checkout.redirectUrl` (persisted as `gatewayRedirectUrl`). The
+  frontend sends the customer there. PhonePe then (a) returns the browser to
+  `PHONEPE_REDIRECT_URL` and (b) POSTs a signed callback to `PHONEPE_CALLBACK_URL`.
+  **The authoritative capture is always the Status API** (`/pg/v1/status/...`,
+  `state === "COMPLETED"`) — the browser return is never trusted.
+- **New service methods:** `PaymentService.confirmByStatus({ orderId })` (queries
+  the Status API and transitions the payment; idempotent via `transitionToPaid`)
+  and `handlePhonePeCallback({ rawBody, signature })` (verifies X-VERIFY, then
+  re-confirms via `confirmByStatus`).
+- **New routes:** `POST /api/payments/phonepe/callback` (S2S) and
+  `GET|POST /api/payments/phonepe/return` (browser return → confirm → redirect to
+  `PHONEPE_RESULT_URL` or JSON).
+- **`verifyPayment` throws** for PhonePe (there is no browser signature) so a
+  mistaken Razorpay-shaped `/verify` call fails loudly rather than silently.
+- **Refunds** reuse the generic admin refund path; PaymentService stores the
+  original `merchantTransactionId` as `gatewayPaymentId`, which the PhonePe
+  adapter passes back as PhonePe's `originalTransactionId`.
+- **Config:** `PHONEPE_MERCHANT_ID`, `PHONEPE_SALT_KEY`, `PHONEPE_SALT_INDEX`,
+  `PHONEPE_BASE_URL`, `PHONEPE_REDIRECT_URL`, `PHONEPE_CALLBACK_URL`,
+  `PHONEPE_RESULT_URL`, `PHONEPE_TIMEOUT_MS`. `validateEnv()` requires merchant
+  id, salt key, and redirect URL when `PAYMENT_PROVIDER=phonepe`.
+- **Tests:** `__tests__/phonepe.test.js` (X-VERIFY correctness, pay/status/refund,
+  callback verify/decode). Uses stubbed `fetch`; no real HTTP.
+
+> **API version:** implements the salt-key PG API. If the merchant is provisioned
+> for the newer OAuth "Standard Checkout" API, only `PhonePeGateway._request`'s
+> auth layer + endpoint paths change — the service/controller wiring is stable.
+
 ---
 
 ## 8. Persistence / store

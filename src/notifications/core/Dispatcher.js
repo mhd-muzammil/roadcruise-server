@@ -68,16 +68,22 @@ export class Dispatcher {
         detail: { providerMessageId: result.providerMessageId, provider: provider.name },
       });
     } catch (err) {
+      // Record failure latency too, so per-channel latency reflects real time.
+      metrics.recordSend(record.channel, false, Date.now() - startedAt);
       await this._handleFailure(record, err);
-      metrics.recordSend(record.channel, false);
     }
   }
 
   async _handleFailure(record, err) {
     const attempts = record.attempts + 1;
     const message = err?.message || String(err);
+    // Error classification: a provider may mark an error non-retryable (e.g. a
+    // 4xx such as bad template / bad credentials, where retrying can never
+    // succeed). Default (undefined) is retryable — preserving the existing
+    // behavior of every current provider (mock/smtp/meta throw plain errors).
+    const retryable = err?.retryable !== false;
 
-    if (attempts < record.maxAttempts) {
+    if (retryable && attempts < record.maxAttempts) {
       const delay = this._backoffMs(attempts);
       const nextAttemptAt = new Date(Date.now() + delay).toISOString();
       await this.repository.update(record.id, {
@@ -86,7 +92,7 @@ export class Dispatcher {
         error: message,
         nextAttemptAt,
       });
-      metrics.incr("retries");
+      metrics.recordRetry(record.channel);
       await auditLog.record({
         action: "retry",
         event: record.event,
@@ -98,7 +104,7 @@ export class Dispatcher {
       return;
     }
 
-    // Exhausted -> dead-letter + admin alert.
+    // Exhausted OR non-retryable (terminal) -> dead-letter + admin alert.
     await this.repository.update(record.id, {
       status: DeliveryStatus.DEAD_LETTER,
       attempts,
@@ -120,7 +126,7 @@ export class Dispatcher {
       notificationId: record.id,
       channel: record.channel,
       result: "failed",
-      detail: { attempts, error: message },
+      detail: { attempts, error: message, terminal: !retryable },
     });
     await this._alertAdmin(record, message);
   }

@@ -10,10 +10,19 @@ const repo = () => getPaymentRepository();
 
 // GET /api/payments/config  — public checkout config for the frontend (no secrets)
 export const getConfig = (_req, res) => {
+  const keyId =
+    config.provider === "razorpay"
+      ? config.razorpay.keyId
+      : config.provider === "phonepe"
+      ? config.phonepe.merchantId
+      : "mock_key_id";
   res.json({
     enabled: config.enabled,
     provider: config.provider,
-    keyId: config.provider === "razorpay" ? config.razorpay.keyId : "mock_key_id",
+    keyId,
+    // Redirect gateways drive checkout by sending the customer to the URL
+    // returned in POST /orders (checkout.redirectUrl), not an in-page SDK.
+    redirect: config.provider === "phonepe",
     currency: config.currency,
     webhookEnabled: config.webhookEnabled,
   });
@@ -70,6 +79,44 @@ export const webhook = async (req, res) => {
   const result = await service().handleWebhook({ rawBody, signature, eventId });
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
+};
+
+// ---- PhonePe (redirect gateway) ----
+
+// POST /api/payments/phonepe/callback — PhonePe server-to-server callback.
+// Verifies the X-VERIFY header against the RAW body, then confirms via the
+// authoritative Status API. Uses req.rawBody (captured in app.js) for signing.
+export const phonepeCallback = async (req, res) => {
+  const signature = req.get("x-verify");
+  const rawBody = req.rawBody;
+  if (!rawBody) return res.status(400).json({ ok: false, reason: "no_raw_body" });
+  const result = await service().handlePhonePeCallback({ rawBody, signature });
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+};
+
+// GET|POST /api/payments/phonepe/return — where PhonePe returns the customer's
+// browser after payment. We confirm the order via the Status API, then either
+// redirect to the configured frontend result page or respond with JSON.
+export const phonepeReturn = async (req, res) => {
+  const orderId = req.query.orderId || req.body?.orderId || req.params.orderId;
+  if (!orderId) return res.status(400).json({ error: "orderId is required" });
+  let status = "pending";
+  try {
+    const r = await service().confirmByStatus({ orderId, actor: "phonepe-return" });
+    status = r.status;
+  } catch (e) {
+    if (e.code === "NOT_FOUND") return res.status(404).json({ error: e.message });
+    // A transient Status API error leaves the payment pending; the S2S callback
+    // will still confirm it. Surface pending rather than erroring the customer.
+    status = "pending";
+  }
+  const resultUrl = config.phonepe?.resultUrl;
+  if (resultUrl) {
+    const sep = resultUrl.includes("?") ? "&" : "?";
+    return res.redirect(`${resultUrl}${sep}status=${status}&orderId=${encodeURIComponent(orderId)}`);
+  }
+  res.json({ success: status === "paid", status, orderId });
 };
 
 // ---- admin (guarded) ----
@@ -142,4 +189,16 @@ export const receipt = (req, res) => {
   res.json(doc);
 };
 
-export default { getConfig, createOrder, verify, webhook, list, getOne, refund, retry, receipt };
+export default {
+  getConfig,
+  createOrder,
+  verify,
+  webhook,
+  phonepeCallback,
+  phonepeReturn,
+  list,
+  getOne,
+  refund,
+  retry,
+  receipt,
+};

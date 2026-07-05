@@ -60,3 +60,13 @@ src/payments/data/
 
 # Auth module runtime data (sessions + audit trail — do not commit)
 src/auth/data/
+
+# SQLite database — the live runtime store. Contains real customer PII and
+# password hashes; NEVER commit it, its WAL/SHM sidecars, backups, or the
+# one-time migration backup of the legacy JSON store.
+src/config/*.db
+src/config/*.db-wal
+src/config/*.db-shm
+src/config/backups/
+src/config/db.json
+src/config/db.json.migrated.bak

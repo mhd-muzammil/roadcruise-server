@@ -22,6 +22,22 @@ export function defaultRecipients(payload = {}) {
 }
 
 /**
+ * Admin recipient resolver. Ignores the customer's contact details and routes
+ * the message to the business's own WhatsApp (config.admin.whatsapp). Used only
+ * by the internal ADMIN_* alert events. If no admin number is configured the
+ * whatsapp recipient is null and the engine SKIPS the channel (no crash).
+ */
+export function adminRecipients() {
+  return {
+    customerId: "admin",
+    name: config.admin?.name || "Admin",
+    email: null,
+    sms: null,
+    whatsapp: config.admin?.whatsapp || null,
+  };
+}
+
+/**
  * Default template context builder. Maps a domain payload onto the canonical
  * placeholder names ({{customerName}}, {{bookingId}}, ...). Branding is merged
  * in by the engine, but included here for completeness.
@@ -30,6 +46,7 @@ export function defaultContext(payload = {}) {
   return {
     ...config.branding,
     customerName: payload.name || payload.customerName || "Customer",
+    customerPhone: payload.phone || payload.customerPhone || "—",
     bookingId: payload.bookingId || payload.id || "—",
     tripDate:
       payload.tripDate ||
@@ -66,7 +83,8 @@ const base = (channels = ALL, overrides = {}) => ({
  */
 export const workflows = {
   [NotificationEvents.BOOKING_CREATED]: base(),
-  [NotificationEvents.BOOKING_CONFIRMED]: base(),
+  // Confirmation-after-payment message -> customer SMS + WhatsApp.
+  [NotificationEvents.BOOKING_CONFIRMED]: base([Channels.SMS, Channels.WHATSAPP]),
   [NotificationEvents.BOOKING_CANCELLED]: base(),
   [NotificationEvents.BOOKING_RESCHEDULED]: base(),
 
@@ -83,12 +101,17 @@ export const workflows = {
   [NotificationEvents.DRIVER_ASSIGNED]: base(),
   [NotificationEvents.DRIVER_CHANGED]: base(),
 
-  [NotificationEvents.INVOICE_GENERATED]: base([Channels.EMAIL]),
+  // The paid-booking invoice -> customer Email + WhatsApp.
+  [NotificationEvents.INVOICE_GENERATED]: base([Channels.EMAIL, Channels.WHATSAPP]),
 
   [NotificationEvents.CUSTOMER_REGISTERED]: base([Channels.EMAIL, Channels.WHATSAPP]),
   [NotificationEvents.OTP_REQUESTED]: base([Channels.SMS, Channels.EMAIL]),
   [NotificationEvents.PASSWORD_RESET]: base([Channels.EMAIL]),
   [NotificationEvents.EMAIL_VERIFICATION]: base([Channels.EMAIL]),
+
+  // Internal admin alerts -> the business's own WhatsApp only.
+  [NotificationEvents.ADMIN_BOOKING_PAID]: base([Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
+  [NotificationEvents.ADMIN_BOOKING_UNPAID]: base([Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
 
   __default: base(),
 };

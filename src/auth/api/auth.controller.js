@@ -16,7 +16,9 @@ const mapErr = (res, e, fallback) => {
 export const googleConfig = (_req, res) => {
   res.json({
     enabled: config.enabled,
-    mode: googleMode(), // "google" | "mock"
+    // "real" when a Google client id is configured, else "mock". (Internally
+    // googleMode() returns "google"; surfaced as "real" for the client.)
+    mode: googleMode() === "mock" ? "mock" : "real",
     clientId: publicGoogleClientId(), // null in mock mode
   });
 };

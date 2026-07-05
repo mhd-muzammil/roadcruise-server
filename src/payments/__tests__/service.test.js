@@ -1,42 +1,23 @@
-import { test, before, after } from "node:test";
+import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import { PaymentService } from "../core/PaymentService.js";
 import { PaymentRepository } from "../repository/PaymentRepository.js";
 import { MockGateway } from "../gateways/MockGateway.js";
 import { PaymentStatus, WebhookEvents } from "../config/paymentEvents.js";
+import { useTempDb, seedBooking } from "../../db/testSupport.js";
 
 // PaymentService.verifyAndCapture / handleWebhook -> _markPaid -> confirmBooking
-// WRITES to src/config/db.json. We snapshot the exact bytes before the suite and
-// restore them after, so the dev DB is left byte-identical.
-//
-// createOrderForBooking is idempotent PER bookingId (it reuses an existing
-// active/PAID payment), so each test needs its OWN unique booking. We inject a
-// throwaway booking into db.json per test; the snapshot/restore guarantees the
-// file is byte-identical at the end regardless.
-const __filename = fileURLToPath(import.meta.url);
-const DB_PATH = path.resolve(path.dirname(__filename), "../../config/db.json");
+// writes booking state. Bookings live in an isolated, empty temp SQLite DB per
+// run (never the real one). createOrderForBooking is idempotent PER bookingId,
+// so each test needs its OWN unique booking.
+before(() => useTempDb());
 
-let dbSnapshot;
-
-before(() => {
-  dbSnapshot = fs.readFileSync(DB_PATH);
-});
-
-after(() => {
-  // Restore exact original bytes.
-  fs.writeFileSync(DB_PATH, dbSnapshot);
-});
-
-// Insert a unique throwaway booking and return its id. Safe because the whole
-// file is restored to its original bytes in `after`.
+// Insert a unique throwaway booking and return its id.
+let bkCounter = 0;
 function addBooking(fare = 2400) {
-  const bookingId = `RC-BK-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  db.bookings.push({
+  const bookingId = `RC-BK-TEST-${process.pid}-${bkCounter++}`;
+  seedBooking({
     id: bookingId,
     name: "Test Customer",
     phone: "+91 90000 00000",
@@ -47,7 +28,6 @@ function addBooking(fare = 2400) {
     status: "Pending",
     paymentMethod: "Card",
   });
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
   return bookingId;
 }
 

@@ -1,40 +1,16 @@
-import { test, before, after } from "node:test";
+import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import { getAuthService } from "../core/AuthService.js";
 import { mintMockIdToken } from "../providers/GoogleProvider.js";
+import { useTempDb, seedUser as seedLocalUser, countUsers } from "../../db/testSupport.js";
 
-// AuthService.authenticateWithGoogle -> createFromGoogle/linkGoogle/touchLastLogin
-// WRITE src/config/db.json. Snapshot the exact bytes before the suite and restore
-// after. Every test uses UNIQUE emails/subs so tests are independent.
-// Assumes MOCK Google mode (no GOOGLE_CLIENT_ID) — the zero-infra default.
-const __filename = fileURLToPath(import.meta.url);
-const DB_PATH = path.resolve(path.dirname(__filename), "../../config/db.json");
-
+// Runs against an isolated, empty temp SQLite DB per run (never the real one).
+// Assumes MOCK Google mode (no GOOGLE_CLIENT_ID) — the zero-infra default. Every
+// test uses UNIQUE emails/subs so tests are independent.
 const auth = getAuthService();
-let dbSnapshot;
 
-before(() => {
-  dbSnapshot = fs.readFileSync(DB_PATH);
-});
-
-after(() => {
-  fs.writeFileSync(DB_PATH, dbSnapshot);
-});
-
-function seedLocalUser(user) {
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  db.users.push(user);
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
-}
-
-function countUsers(email) {
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  return db.users.filter((u) => String(u.email).toLowerCase() === email.toLowerCase()).length;
-}
+before(() => useTempDb());
 
 test("NEW email => firstLogin:true, sanitized user (no password) + 3-part token", async () => {
   const email = "as.new@example.com";

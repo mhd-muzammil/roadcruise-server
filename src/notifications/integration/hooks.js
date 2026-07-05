@@ -57,6 +57,15 @@ export function notifyCustomerRegistered(user, meta = {}) {
   return notify(NotificationEvents.CUSTOMER_REGISTERED, { ...user }, meta);
 }
 
+/**
+ * ADMIN alert: a booking was placed WITHOUT online payment (pay-on-arrival).
+ * Goes to the business's own WhatsApp so staff can contact the customer and
+ * collect payment manually.
+ */
+export function notifyAdminBookingUnpaid(booking, meta = {}) {
+  return notify(NotificationEvents.ADMIN_BOOKING_UNPAID, { ...booking }, meta);
+}
+
 export default {
   notifyBookingCreated,
   notifyBookingConfirmed,
@@ -64,4 +73,5 @@ export default {
   notifyDriverAssigned,
   notifyBookingCancelled,
   notifyCustomerRegistered,
+  notifyAdminBookingUnpaid,
 };

@@ -8,7 +8,13 @@ import { notify, NotificationEvents } from "../../notifications/index.js";
  */
 const base = (booking, extra = {}) => ({ ...booking, ...extra });
 
-/** Verified payment success -> payment receipt + invoice + booking confirmation. */
+/**
+ * Verified payment success. Sends exactly:
+ *   1. INVOICE_GENERATED   -> customer Email + WhatsApp (the invoice/receipt)
+ *   2. BOOKING_CONFIRMED   -> customer SMS + WhatsApp (trip confirmed)
+ *   3. ADMIN_BOOKING_PAID  -> the business's own WhatsApp (customer details)
+ * (Channel targeting is defined in notifications/workflows/registry.js.)
+ */
 export function emitPaymentSucceeded(booking, { amount, invoiceNumber, receiptNumber } = {}) {
   const payload = base(booking, {
     paymentAmount: amount ?? booking.fare,
@@ -16,9 +22,9 @@ export function emitPaymentSucceeded(booking, { amount, invoiceNumber, receiptNu
     invoiceNumber,
     receiptNumber,
   });
-  notify(NotificationEvents.PAYMENT_SUCCESSFUL, payload, { actor: "payment-service" });
   notify(NotificationEvents.INVOICE_GENERATED, payload, { actor: "payment-service" });
   notify(NotificationEvents.BOOKING_CONFIRMED, payload, { actor: "payment-service" });
+  notify(NotificationEvents.ADMIN_BOOKING_PAID, payload, { actor: "payment-service" });
 }
 
 export function emitPaymentPending(booking, { amount, invoiceNumber } = {}) {

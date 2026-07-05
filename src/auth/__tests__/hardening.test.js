@@ -7,42 +7,31 @@ import { fileURLToPath } from "url";
 import { getAuthService } from "../core/AuthService.js";
 import { storedCredential, setResetToken, setVerificationToken, findByEmail } from "../core/userService.js";
 import { config } from "../config/auth.config.js";
+import { useTempDb, seedUser } from "../../db/testSupport.js";
+import { readDb } from "../../utils/db.js";
 
-// AuthService.authenticateLocal / registerLocal / resetPassword / verifyEmail WRITE
-// src/config/db.json (users) via userService, and sessionStore writes
-// src/auth/data/sessions.json. Snapshot the exact bytes of BOTH before the suite
-// and restore after, so both files are left byte-identical. Every test uses a
-// UNIQUE email. Assumes default flags (refreshToken/passwordReset on) and default
-// lockout (maxAttempts=5).
+// Users live in an isolated, empty temp SQLite DB per run; sessionStore still
+// writes src/auth/data/sessions.json, so we snapshot/restore just that file.
+// Every test uses a UNIQUE email. Assumes default flags (refreshToken/
+// passwordReset on) and default lockout (maxAttempts=5).
 const __filename = fileURLToPath(import.meta.url);
-const DB_PATH = path.resolve(path.dirname(__filename), "../../config/db.json");
 const SESSIONS_PATH = path.resolve(path.dirname(__filename), "../data/sessions.json");
 
 const auth = getAuthService();
-let dbSnapshot;
 let sessionsSnapshot;
 
 before(() => {
-  dbSnapshot = fs.readFileSync(DB_PATH);
+  useTempDb();
   sessionsSnapshot = fs.readFileSync(SESSIONS_PATH);
 });
 
 after(() => {
-  fs.writeFileSync(DB_PATH, dbSnapshot);
   fs.writeFileSync(SESSIONS_PATH, sessionsSnapshot);
 });
 
-/** Seed a raw user row directly into db.json (used for legacy plaintext accounts). */
-function seedUser(user) {
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  db.users.push(user);
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
-}
-
 /** Read the raw persisted user row (bypassing sanitize) for internal assertions. */
 function rawUser(email) {
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  return db.users.find((u) => String(u.email).toLowerCase() === email.toLowerCase()) || null;
+  return readDb().users.find((u) => String(u.email).toLowerCase() === email.toLowerCase()) || null;
 }
 
 test("authenticateLocal migrates a legacy PLAINTEXT user to a scrypt hash", async () => {

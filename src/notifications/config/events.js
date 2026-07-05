@@ -38,6 +38,12 @@ export const NotificationEvents = Object.freeze({
   OTP_REQUESTED: "auth.otp_requested",
   PASSWORD_RESET: "auth.password_reset",
   EMAIL_VERIFICATION: "auth.email_verification",
+
+  // Internal ADMIN alerts — sent to the business's own WhatsApp (not the
+  // customer) so staff can act on each booking. PAID = money already collected
+  // online; UNPAID = customer must be contacted to collect payment manually.
+  ADMIN_BOOKING_PAID: "admin.booking_paid",
+  ADMIN_BOOKING_UNPAID: "admin.booking_unpaid",
 });
 
 /** Delivery channels supported by the engine. */

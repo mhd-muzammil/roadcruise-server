@@ -123,6 +123,15 @@ export const whatsappTemplates = {
       "*{{companyName}}* 🔑\nHi {{customerName}}, we received a request to reset your password.\n\nTap below to set a new one. If you didn't request this, please ignore this message or contact {{supportPhone}}.",
     buttons: [{ type: "url", text: "Reset Password", url: "{{websiteUrl}}" }],
   },
+  // ---- Internal ADMIN alerts (sent to the business's own WhatsApp) ----
+  [NotificationEvents.ADMIN_BOOKING_PAID]: {
+    text:
+      "*{{companyName}}* — 💰 NEW PAID BOOKING\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}\n🚗 {{vehicle}}\n📅 {{tripDate}}\n💳 Paid: ₹{{paymentAmount}} (Invoice {{invoiceNumber}})\n\nPayment received online — trip confirmed.",
+  },
+  [NotificationEvents.ADMIN_BOOKING_UNPAID]: {
+    text:
+      "*{{companyName}}* — 🆕 NEW BOOKING (UNPAID)\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}\n🚗 {{vehicle}}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\n☎️ Please contact the customer to confirm and collect payment.",
+  },
   generic: {
     text: "*{{companyName}}*\nUpdate on {{bookingId}}. Contact {{supportPhone}} for details.",
   },

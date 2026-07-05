@@ -1,34 +1,19 @@
-import { test, before, after } from "node:test";
+import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import { EmailPasswordProvider } from "../providers/EmailPasswordProvider.js";
+import { useTempDb, seedUser } from "../../db/testSupport.js";
 
 // REGRESSION guard: proves the existing local email/password login still works
 // through the provider abstraction (which mirrors the live login's plaintext
-// comparison exactly). EmailPasswordProvider.authenticate only READS db.json,
-// but we seed a Google-only user for one case, so snapshot/restore the bytes.
-const __filename = fileURLToPath(import.meta.url);
-const DB_PATH = path.resolve(path.dirname(__filename), "../../config/db.json");
-
+// comparison exactly). Runs against an isolated temp DB seeded with a
+// deterministic admin (decoupled from the mutable real db.json).
 const local = new EmailPasswordProvider();
-let dbSnapshot;
 
 before(() => {
-  dbSnapshot = fs.readFileSync(DB_PATH);
+  useTempDb();
+  seedUser({ name: "Admin Mohamed", email: "admin@roadcruise.com", password: "admin123", role: "admin" });
 });
-
-after(() => {
-  fs.writeFileSync(DB_PATH, dbSnapshot);
-});
-
-function seedUser(user) {
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  db.users.push(user);
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
-}
 
 test("seeded admin (admin@roadcruise.com / admin123) authenticates successfully", async () => {
   const profile = await local.authenticate({ email: "admin@roadcruise.com", password: "admin123" });

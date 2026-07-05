@@ -5,6 +5,7 @@ import { MockEmailProvider } from "./email/MockEmailProvider.js";
 import { SmtpEmailProvider } from "./email/SmtpEmailProvider.js";
 import { MockSmsProvider } from "./sms/MockSmsProvider.js";
 import { TwilioSmsProvider } from "./sms/TwilioSmsProvider.js";
+import { Msg91SmsProvider } from "./sms/Msg91SmsProvider.js";
 import { MockWhatsAppProvider } from "./whatsapp/MockWhatsAppProvider.js";
 import { MetaWhatsAppProvider } from "./whatsapp/MetaWhatsAppProvider.js";
 
@@ -22,7 +23,8 @@ const REGISTRY = {
   [Channels.SMS]: {
     mock: () => new MockSmsProvider(),
     twilio: () => new TwilioSmsProvider(),
-    // msg91 / textlocal -> add adapters here
+    msg91: () => new Msg91SmsProvider(),
+    // textlocal -> add adapters here
   },
   [Channels.WHATSAPP]: {
     mock: () => new MockWhatsAppProvider(),

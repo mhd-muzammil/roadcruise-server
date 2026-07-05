@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHash, createHmac, timingSafeEqual } from "crypto";
 
 /**
  * All signature verification is HMAC-SHA256 with a TIMING-SAFE comparison.
@@ -6,6 +6,33 @@ import { createHmac, timingSafeEqual } from "crypto";
  */
 export function hmacSha256Hex(payload, secret) {
   return createHmac("sha256", String(secret)).update(payload).digest("hex");
+}
+
+/** Plain SHA-256 hex digest (used by the PhonePe X-VERIFY scheme). */
+export function sha256Hex(payload) {
+  return createHash("sha256").update(String(payload)).digest("hex");
+}
+
+/**
+ * PhonePe X-VERIFY header value: SHA256(<stringToSign> + saltKey) + "###" + saltIndex.
+ * For requests, stringToSign = base64Payload + apiPath; for callbacks it is the
+ * raw base64 `response` string. Returns the full "<hash>###<index>" token.
+ */
+export function phonepeXVerify(stringToSign, saltKey, saltIndex) {
+  return `${sha256Hex(`${stringToSign}${saltKey}`)}###${saltIndex}`;
+}
+
+/**
+ * Verify a PhonePe X-VERIFY token (timing-safe on the hash portion). PhonePe
+ * callback signs over the base64 `response` body only.
+ * @returns {boolean}
+ */
+export function verifyPhonePeXVerify(stringToSign, headerValue, saltKey, saltIndex) {
+  if (!stringToSign || !headerValue || !saltKey) return false;
+  const expected = phonepeXVerify(stringToSign, saltKey, saltIndex);
+  // Compare the hash segment (before ###) so an index mismatch is tolerated only
+  // if the caller passes the same index; full-token compare keeps it strict.
+  return timingSafeEqualHex(expected, headerValue);
 }
 
 /** Constant-time hex-string comparison (length-safe). */

@@ -1,8 +1,5 @@
-import { test, before, after } from "node:test";
+import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import {
   sanitize,
@@ -11,35 +8,11 @@ import {
   createFromGoogle,
   linkGoogle,
 } from "../core/userService.js";
+import { useTempDb, seedUser as seedLocalUser, countUsers } from "../../db/testSupport.js";
 
-// userService.createFromGoogle / linkGoogle WRITE src/config/db.json via
-// utils/db.js. We snapshot the exact bytes before the suite and restore them
-// after, so the dev DB is left byte-identical. Every test uses UNIQUE emails/subs.
-const __filename = fileURLToPath(import.meta.url);
-const DB_PATH = path.resolve(path.dirname(__filename), "../../config/db.json");
-
-let dbSnapshot;
-
-before(() => {
-  dbSnapshot = fs.readFileSync(DB_PATH);
-});
-
-after(() => {
-  fs.writeFileSync(DB_PATH, dbSnapshot);
-});
-
-// Directly seed a legacy local (email/password) user into db.json so linkGoogle
-// has an existing account to attach to. Restored to original bytes in `after`.
-function seedLocalUser(user) {
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  db.users.push(user);
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
-}
-
-function countUsers(email) {
-  const db = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  return db.users.filter((u) => String(u.email).toLowerCase() === email.toLowerCase()).length;
-}
+// Each run uses an isolated, empty temp SQLite DB (never the real one). Every
+// test uses UNIQUE emails/subs so they are independent.
+before(() => useTempDb());
 
 test("createFromGoogle creates a customer with additive Google fields and no password", () => {
   const email = "us.create@example.com";

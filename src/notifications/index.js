@@ -37,8 +37,38 @@ function buildEngine() {
   return service;
 }
 
-/** Initialize: mount admin routes + start the engine. Call once at startup. */
+/** A value is "unset" if empty or still a «CHANGEME_...» placeholder. */
+function isSet(v) {
+  return !!v && !String(v).startsWith("«CHANGEME");
+}
+
+/**
+ * Validate the config of the SELECTED providers only, so switching a channel to
+ * "mock" always boots. Returns an errors[]. Currently guards the msg91 SMS
+ * provider; extend per provider as needed.
+ */
+export function validateProviderConfig(cfg = config) {
+  const errors = [];
+  if (cfg.providers[Channels.SMS] === "msg91") {
+    if (!isSet(cfg.msg91.authKey)) errors.push("MSG91_API_KEY is required when NOTIF_SMS_PROVIDER=msg91");
+    if (!isSet(cfg.msg91.templateId)) errors.push("MSG91_TEMPLATE_ID is required when NOTIF_SMS_PROVIDER=msg91");
+  }
+  return errors;
+}
+
+/** Initialize: validate provider config, mount admin routes + start the engine. */
 function init(app) {
+  const errors = validateProviderConfig();
+  if (errors.length) {
+    // FAIL CLOSED in production (mirrors the auth/payment modules); WARN in dev
+    // so local work isn't blocked. Only triggers for a selected+misconfigured
+    // provider — mock/other selections boot normally.
+    if (config.isProduction) {
+      throw new Error(`[notifications] refusing to start: ${errors.join("; ")}`);
+    }
+    errors.forEach((e) => console.warn(`[notifications] ${e}`));
+  }
+
   const svc = buildEngine();
   if (app) app.use("/api/notifications", notificationRoutes);
   svc.start();

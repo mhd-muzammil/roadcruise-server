@@ -259,24 +259,25 @@ Branding fields are spread into the context first; the engine relies on the work
 
 Each channel has a **mock** adapter (default) and a **real** adapter that is **dormant** until selected via env. Real adapters lazy-import their SDK so they are never hard dependencies of the zero-infra path.
 
-| Channel | Mock (default) | Real (dormant) | Activation |
+| Channel | Mock (default) | Real (production) | Activation |
 |---|---|---|---|
-| email | `MockEmailProvider` (`mock-email`) | `SmtpEmailProvider` (`smtp`, nodemailer) | `NOTIF_EMAIL_PROVIDER=smtp` + SMTP_* |
-| sms | `MockSmsProvider` (`mock-sms`) | `TwilioSmsProvider` (`twilio-sms`, twilio SDK) | `NOTIF_SMS_PROVIDER=twilio` + TWILIO_* |
-| whatsapp | `MockWhatsAppProvider` (`mock-whatsapp`) | `MetaWhatsAppProvider` (`meta-whatsapp`, global fetch) | `NOTIF_WHATSAPP_PROVIDER=meta` + META_* |
+| email | `MockEmailProvider` (`mock-email`) | `SmtpEmailProvider` (`smtp`, nodemailer / Brevo) | `NOTIF_EMAIL_PROVIDER=smtp` + SMTP_* |
+| sms | `MockSmsProvider` (`mock-sms`) | `TwilioSmsProvider` (`twilio-sms`, twilio SDK) **or** `Msg91SmsProvider` (`msg91-sms`, global fetch) | `NOTIF_SMS_PROVIDER=twilio` + TWILIO_* — or — `NOTIF_SMS_PROVIDER=msg91` + MSG91_* |
+| whatsapp | `MockWhatsAppProvider` (`mock-whatsapp`) | `MetaWhatsAppProvider` (`meta-whatsapp`, global fetch) | `NOTIF_WHATSAPP_PROVIDER=meta` + WHATSAPP_* (legacy `META_WHATSAPP_*` still honored as fallback) |
 
 **Provider contract** (`Provider.js`): `get name()` and `async send({ to, subject?, body, meta? }) → { providerMessageId, status, raw }`. On unrecoverable failure it **throws** — the Dispatcher converts throws into retry/dead-letter. Returning normally means "accepted".
 
 Mock providers log to console and return a synthetic id. They also expose deterministic failure hooks for testing retry: a recipient containing **`fail@`** (email) or **`000000`** (sms/whatsapp) throws.
 
 **Activating real providers:**
-- **SMTP:** `NOTIF_EMAIL_PROVIDER=smtp`, set `SMTP_HOST` (required) + `SMTP_PORT/SECURE/USER/PASS/FROM`. Requires `npm i nodemailer`.
-- **Twilio SMS:** `NOTIF_SMS_PROVIDER=twilio`, set `TWILIO_ACCOUNT_SID/AUTH_TOKEN/SMS_FROM`. Requires `npm i twilio`.
-- **Meta WhatsApp:** `NOTIF_WHATSAPP_PROVIDER=meta`, set `META_WHATSAPP_PHONE_NUMBER_ID/ACCESS_TOKEN` (+ optional `API_VERSION`). Uses built-in fetch (Node 18+), no SDK.
+- **SMTP / Brevo:** `NOTIF_EMAIL_PROVIDER=smtp`, set `SMTP_HOST` (Brevo: `smtp-relay.brevo.com`) + `SMTP_PORT/SECURE/USER/PASS/FROM`. Ships with verified TLS (`minVersion TLSv1.2`), connection pooling, per-window rate limiting, connection/greeting/socket timeouts, and graceful reconnect on broken pooled connections. Sends HTML with auto plain-text fallback and supports attachments (nodemailer format); delivery status maps `accepted → sent` and throws when all recipients are rejected. Tunables: `SMTP_POOL/MAX_CONNECTIONS/MAX_MESSAGES/RATE_LIMIT/RATE_DELTA_MS/CONNECTION_TIMEOUT_MS/GREETING_TIMEOUT_MS/SOCKET_TIMEOUT_MS/REQUIRE_TLS/TLS_REJECT_UNAUTHORIZED`. Requires `npm i nodemailer` (already installed).
+- **Twilio SMS:** `NOTIF_SMS_PROVIDER=twilio`, set `TWILIO_ACCOUNT_SID/AUTH_TOKEN/SMS_FROM`. Requires `npm i twilio` (already installed).
+- **MSG91 SMS:** `NOTIF_SMS_PROVIDER=msg91`, set `MSG91_API_KEY`, `MSG91_SENDER_ID` (6-char DLT header), `MSG91_TEMPLATE_ID` (DLT flow template) (+ optional `MSG91_BODY_VAR/DEFAULT_COUNTRY_CODE/BASE_URL/TIMEOUT_MS`). India DLT-compliant, uses the v5 Flow API over built-in fetch (no SDK). Sends OTP/transactional/booking/payment SMS uniformly — the engine renders the body and the provider injects it into the DLT template's body variable. `AbortController` timeout. It does **one** attempt and **classifies** the outcome, attaching a `retryable` flag; the Dispatcher owns the actual retry/backoff (see §8). Transient failures (network, timeout, HTTP `408/429/500/502/503/504`) are retryable; permanent ones (bad config, invalid number, HTTP `400/401/403/404`, MSG91 logical errors) fail fast. Config is validated at startup — when `msg91` is selected, a missing `MSG91_API_KEY`/`MSG91_TEMPLATE_ID` **fails closed in production** (warns in development). The auth key, phone number and message body are never logged.
+- **Meta WhatsApp:** `NOTIF_WHATSAPP_PROVIDER=meta`, set `WHATSAPP_PHONE_NUMBER_ID/ACCESS_TOKEN` (+ optional `WHATSAPP_API_VERSION/TIMEOUT_MS`); legacy `META_WHATSAPP_PHONE_NUMBER_ID/ACCESS_TOKEN/API_VERSION` are still honored as fallbacks. Uses built-in fetch (Node 18+), no SDK. Supports text, image and document (PDF) via public link, and template messages; `AbortController` timeout, a small transient retry (429/5xx/network) with deterministic backoff, and error mapping that never leaks the token.
 
-**Adding a new vendor:** write an adapter class implementing the contract under `providers/<channel>/`, then add one line to the `REGISTRY` in `providers/index.js` (e.g. `ses`, `sendgrid`, `resend` for email; `msg91`, `textlocal` for sms; `twilio-whatsapp`, `interakt` for whatsapp). Select it via the channel's `NOTIF_*_PROVIDER` env var. Business code is untouched. (`getProvider` caches one instance per channel.)
+**Adding a new vendor:** write an adapter class implementing the contract under `providers/<channel>/`, then add one line to the `REGISTRY` in `providers/index.js` (e.g. `ses`, `sendgrid`, `resend` for email; `textlocal`, `kaleyra` for sms — `twilio` and `msg91` already ship; `twilio-whatsapp`, `interakt` for whatsapp). Select it via the channel's `NOTIF_*_PROVIDER` env var. Business code is untouched. (`getProvider` caches one instance per channel.)
 
-> Rich-content extras (`buttons`, `mediaUrl`, `attachments`) are passed to providers via `message.meta`. The mock and SMS-grade providers ignore them gracefully; PDF/QR attachment rendering and WhatsApp rich-template buttons are registered extension points — the Meta adapter currently sends plain text only.
+> Rich-content extras (`buttons`, `mediaUrl`, `attachments`) are passed to providers via `message.meta`. The mock and SMS-grade providers ignore them gracefully. The Meta adapter now supports text, image and document (PDF) messages via public link, and template messages; the SMTP adapter supports attachments in nodemailer format. WhatsApp rich-template buttons remain a registered extension point.
 
 ---
 
@@ -303,7 +304,9 @@ With defaults (`baseBackoffMs=2000`, `factor=3`, `maxBackoffMs=60000`, `jitterMs
 | attempt 2 → schedule retry | 2000 × 3¹ = 6000 ms | ~6000–6500 ms |
 | attempt 3 (= maxAttempts) | — | **dead-letter** (no further retry) |
 
-**Dead-letter behavior:** when `attempts >= maxAttempts`, the record is set to `DEAD_LETTER`, a DLQ entry is pushed via `pushDeadLetter`, `metrics.deadLettered` increments, an audit `dead_letter` entry is written, and `_alertAdmin` sends an ops email (via the email provider) to `dlqAlert.email` if alerting is enabled.
+**Error classification (retryable vs terminal):** a provider may attach `err.retryable = false` to a thrown error to signal a *permanent* failure (e.g. a `4xx` such as a bad DLT template or invalid credentials — retrying can never succeed). When set, `_handleFailure` skips retries and dead-letters immediately (audit `detail.terminal = true`). The flag is **opt-in**: any error without it (the default for mock/SMTP/Meta) is treated as retryable, so existing behavior is unchanged. The MSG91 provider is the first to use this.
+
+**Dead-letter behavior:** when `attempts >= maxAttempts` **or** the error is non-retryable, the record is set to `DEAD_LETTER`, a DLQ entry is pushed via `pushDeadLetter`, `metrics.deadLettered` increments, an audit `dead_letter` entry is written, and `_alertAdmin` sends an ops email (via the email provider) to `dlqAlert.email` if alerting is enabled.
 
 ---
 
@@ -489,7 +492,7 @@ All config comes from env (`config/notification.config.js`). Booleans accept `1/
 | `NOTIF_SMS_ENABLED` | `true` | Enable SMS channel. |
 | `NOTIF_WHATSAPP_ENABLED` | `true` | Enable WhatsApp channel. |
 | `NOTIF_EMAIL_PROVIDER` | `mock` | `mock` \| `smtp`. |
-| `NOTIF_SMS_PROVIDER` | `mock` | `mock` \| `twilio`. |
+| `NOTIF_SMS_PROVIDER` | `mock` | `mock` \| `twilio` \| `msg91`. |
 | `NOTIF_WHATSAPP_PROVIDER` | `mock` | `mock` \| `meta`. |
 | `REDIS_URL` | _unset_ | If set → BullMQ/Redis queue (else in-process). |
 | `DATABASE_URL` | _unset_ | If set → intended Postgres repo (currently warns + falls back to JSON). |
@@ -508,16 +511,36 @@ All config comes from env (`config/notification.config.js`). Booleans accept `1/
 | `NODE_ENV` | _unset_ | `production` makes the admin token mandatory (fail-closed). |
 | `NOTIF_DLQ_ALERT_ENABLED` | `true` | Email ops alert on dead-letter. |
 | `NOTIF_DLQ_ALERT_EMAIL` | `SUPPORT_EMAIL` | DLQ alert recipient. |
-| `SMTP_HOST` | _unset_ | SMTP host (required for smtp provider). |
+| `SMTP_HOST` | _unset_ | SMTP host (required for smtp provider; Brevo: `smtp-relay.brevo.com`). |
 | `SMTP_PORT` | `587` | SMTP port. |
-| `SMTP_SECURE` | `false` | TLS on connect. |
+| `SMTP_SECURE` | `false` | Implicit TLS on connect (`true` = TLS/465). |
 | `SMTP_USER` / `SMTP_PASS` | _unset_ | SMTP auth. |
 | `SMTP_FROM` | `SUPPORT_EMAIL` or `no-reply@roadcruise.com` | From address. |
+| `SMTP_POOL` | `true` | Enable connection pooling. |
+| `SMTP_MAX_CONNECTIONS` | `5` | Max pooled connections. |
+| `SMTP_MAX_MESSAGES` | `100` | Max messages per pooled connection. |
+| `SMTP_RATE_LIMIT` | `0` | Messages per rate window (`0` = unlimited). |
+| `SMTP_RATE_DELTA_MS` | `1000` | Rate-limit window (ms). |
+| `SMTP_CONNECTION_TIMEOUT_MS` | `10000` | Connection timeout (ms). |
+| `SMTP_GREETING_TIMEOUT_MS` | `10000` | Greeting timeout (ms). |
+| `SMTP_SOCKET_TIMEOUT_MS` | `20000` | Socket idle timeout (ms). |
+| `SMTP_REQUIRE_TLS` | `true` | Require STARTTLS upgrade. |
+| `SMTP_TLS_REJECT_UNAUTHORIZED` | `true` | Reject invalid/self-signed TLS certs. |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | _unset_ | Twilio creds. |
 | `TWILIO_SMS_FROM` | _unset_ | Twilio SMS sender. |
 | `TWILIO_WHATSAPP_FROM` | _unset_ | Twilio WhatsApp sender (for a future twilio-whatsapp adapter). |
-| `META_WHATSAPP_PHONE_NUMBER_ID` / `META_WHATSAPP_ACCESS_TOKEN` | _unset_ | Meta Cloud API creds. |
-| `META_WHATSAPP_API_VERSION` | `v21.0` | Meta Graph API version. |
+| `MSG91_API_KEY` | _unset_ | MSG91 auth key (required for msg91 provider). |
+| `MSG91_SENDER_ID` | _unset_ | 6-char DLT sender header. |
+| `MSG91_TEMPLATE_ID` | _unset_ | DLT flow template id. |
+| `MSG91_BODY_VAR` | `body` | Template body variable the rendered text is injected into. |
+| `MSG91_DEFAULT_COUNTRY_CODE` | `91` | Default country code for recipient numbers. |
+| `MSG91_BASE_URL` | `https://control.msg91.com` | MSG91 API base URL. |
+| `MSG91_TIMEOUT_MS` | `15000` | Request timeout (ms). |
+| `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_ACCESS_TOKEN` | _unset_ | Meta Cloud API creds. |
+| `WHATSAPP_API_VERSION` | `v21.0` | Meta Graph API version. |
+| `WHATSAPP_TIMEOUT_MS` | `15000` | Request timeout (ms). |
+| `META_WHATSAPP_PHONE_NUMBER_ID` / `META_WHATSAPP_ACCESS_TOKEN` | _unset_ | Legacy alias for `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_ACCESS_TOKEN` (fallback). |
+| `META_WHATSAPP_API_VERSION` | `v21.0` | Legacy alias for `WHATSAPP_API_VERSION` (fallback). |
 
 ---
 
@@ -530,9 +553,10 @@ All config comes from env (`config/notification.config.js`). Booleans accept `1/
   "counters": {
     "enqueued": 0, "processed": 0, "sent": 0, "failed": 0,
     "deadLettered": 0, "retries": 0,
-    "byChannel": { "email": {"sent":0,"failed":0}, "sms": {...}, "whatsapp": {...} },
+    "byChannel": { "email": {"sent":0,"failed":0,"retries":0,"latencyMsTotal":0,"latencyCount":0}, "sms": {...}, "whatsapp": {...} },
     "totalDeliveryMs": 0, "deliveredCount": 0
   },
+  "byChannel": { "sms": { "sent": 0, "failed": 0, "retries": 0, "avgLatencyMs": 0 }, "email": {...}, "whatsapp": {...} },
   "totals": { "records": 0, "byStatus": { "queued":0, "sent":0, ... } },
   "rates": { "deliveryPct": 0, "failurePct": 0, "avgDeliveryMs": 0 },
   "queueSize": 0,
@@ -543,6 +567,7 @@ All config comes from env (`config/notification.config.js`). Booleans accept `1/
 - **`deliveryPct`** = sent / (sent + failed) × 100 — success rate of completed send attempts.
 - **`failurePct`** = failed / (sent + failed) × 100 — failure rate of attempts.
 - **`avgDeliveryMs`** = mean provider send latency over successful sends.
+- **`byChannel`** (top-level) — per-channel view that maps to the conventional SMS metrics: `sms.sent` = `sms_sent_total`, `sms.failed` = `sms_failed_total`, `sms.retries` = `sms_retry_total`, `sms.avgLatencyMs` = `sms_latency_ms`. Latency is tracked for both successful and failed sends. Same shape for `email` and `whatsapp`.
 - **`queueSize`** = records currently `queued` + `processing`.
 - `byStatus` is a live count from the repository; `counters` are in-memory since boot. Swap for Prometheus by emitting these counters to a registry.
 

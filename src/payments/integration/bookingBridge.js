@@ -1,15 +1,16 @@
-import { readDb, writeDb } from "../../utils/db.js";
+import { getBookingById, patchBooking } from "../../utils/db.js";
 
 /**
  * Booking bridge — the ONLY place the payment module touches booking data. It
- * reuses the existing utils/db.js (readDb/writeDb) and the existing "Approved"
- * status value, so no booking contract or schema changes. Additive and idempotent.
+ * reuses utils/db.js and the existing "Approved" status value, so no booking
+ * contract or schema changes. Uses the atomic patchBooking helper so a payment
+ * confirmation updates a single row transactionally (no whole-file rewrite).
+ * Additive and idempotent.
  */
 
 /** Look up a booking by id (or null). */
 export function getBooking(bookingId) {
-  const db = readDb();
-  return db.bookings.find((b) => b.id === bookingId) || null;
+  return getBookingById(bookingId);
 }
 
 /**
@@ -18,15 +19,12 @@ export function getBooking(bookingId) {
  * @returns {{booking: object|null, changed: boolean}}
  */
 export function confirmBooking(bookingId, patch = {}) {
-  const db = readDb();
-  const idx = db.bookings.findIndex((b) => b.id === bookingId);
-  if (idx === -1) return { booking: null, changed: false };
+  const existing = getBookingById(bookingId);
+  if (!existing) return { booking: null, changed: false };
 
-  const prev = db.bookings[idx].status;
-  const alreadyConfirmed = prev === "Approved";
-  db.bookings[idx] = { ...db.bookings[idx], status: "Approved", ...patch };
-  writeDb(db);
-  return { booking: db.bookings[idx], changed: !alreadyConfirmed };
+  const alreadyConfirmed = existing.status === "Approved";
+  const { booking } = patchBooking(bookingId, { status: "Approved", ...patch });
+  return { booking, changed: !alreadyConfirmed };
 }
 
 export default { getBooking, confirmBooking };

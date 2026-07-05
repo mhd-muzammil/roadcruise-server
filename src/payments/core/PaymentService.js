@@ -23,14 +23,23 @@ export class PaymentService extends EventEmitter {
   }
 
   _publicCheckout(payment) {
+    const keyId =
+      config.provider === "razorpay"
+        ? config.razorpay.keyId
+        : config.provider === "phonepe"
+        ? config.phonepe.merchantId
+        : "mock_key_id";
     return {
       provider: config.provider,
-      keyId: config.provider === "razorpay" ? config.razorpay.keyId : "mock_key_id",
+      keyId,
       orderId: payment.gatewayOrderId,
       amount: toMinor(payment.amount),
       currency: payment.currency,
       paymentId: payment.paymentId,
       receiptNumber: payment.receiptNumber,
+      // Redirect-based gateways (PhonePe) return a hosted checkout URL the
+      // frontend must send the customer to. Null for signature/SDK gateways.
+      redirectUrl: payment.gatewayRedirectUrl || null,
     };
   }
 
@@ -73,6 +82,8 @@ export class PaymentService extends EventEmitter {
       customerId: customerId || booking.phone || null,
       gateway: this.gateway.name,
       gatewayOrderId: order.orderId,
+      // Redirect-based gateways (PhonePe) hand back a hosted checkout URL here.
+      gatewayRedirectUrl: order.raw?.redirectUrl || null,
       receiptNumber: order.raw?.receipt || generateReceiptNumber(),
       invoiceNumber: generateInvoiceNumber(bookingId),
       currency: config.currency,
@@ -231,6 +242,88 @@ export class PaymentService extends EventEmitter {
     const booking = bookingBridge.getBooking(payment.bookingId);
     if (booking) notif.emitPaymentFailed(booking, { amount: payment.amount, failureReason: reason });
     return updated;
+  }
+
+  /**
+   * Status-based confirmation for REDIRECT gateways (PhonePe). Queries the
+   * gateway's authoritative Status API for an order and transitions the payment
+   * accordingly — the backend NEVER trusts the browser return or the callback's
+   * self-reported state. Idempotent and safe to call from BOTH the S2S callback
+   * and the browser redirect-return; whichever arrives first wins via the atomic
+   * compare-and-set in transitionToPaid.
+   * @returns {Promise<{status:"paid"|"failed"|"pending", payment, alreadyPaid?}>}
+   */
+  async confirmByStatus({ orderId, actor = "gateway-status" }) {
+    const payment = this.repository.findByOrderId(orderId);
+    if (!payment) {
+      const err = new Error("Payment/order not found");
+      err.code = "NOT_FOUND";
+      throw err;
+    }
+    if (payment.status === PaymentStatus.PAID) {
+      return { status: "paid", alreadyPaid: true, payment };
+    }
+
+    const raw = await this.gateway.fetchPayment(orderId);
+    const st = this.gateway.parseStatus
+      ? this.gateway.parseStatus(raw)
+      : { paid: false, failed: false, pending: true };
+
+    if (st.paid) {
+      // Store the original merchantTransactionId (== orderId) as gatewayPaymentId
+      // so a later refund passes PhonePe the correct originalTransactionId.
+      const res = await this._markPaid(payment, {
+        gatewayPaymentId: orderId,
+        signature: null,
+        captureStatus: "captured",
+        actor,
+        via: "status",
+      });
+      return { status: "paid", payment: res.payment, alreadyPaid: res.alreadyPaid };
+    }
+    if (st.failed) {
+      await this._fail(payment, `phonepe_status_${st.state || st.code || "failed"}`, actor);
+      return { status: "failed", payment: this.repository.findById(payment.paymentId) };
+    }
+    return { status: "pending", payment };
+  }
+
+  /**
+   * Handle a PhonePe server-to-server callback. Verifies the X-VERIFY signature
+   * over the RAW body, then re-confirms the order via the authoritative Status
+   * API (never trusting the callback's self-reported state). Idempotent/replay-safe.
+   * @returns {Promise<{ok, status?, reason?}>}
+   */
+  async handlePhonePeCallback({ rawBody, signature, actor = "phonepe-callback" }) {
+    if (!config.webhookEnabled) return { ok: true, ignored: true };
+    if (!this.gateway.verifyWebhook(rawBody, signature)) {
+      await this.repository.recordAudit({ action: "webhook_rejected", actor, result: "invalid_signature" });
+      return { ok: false, reason: "invalid_signature" };
+    }
+    let decoded;
+    try {
+      decoded = this.gateway.decodeCallback(rawBody);
+    } catch {
+      return { ok: false, reason: "invalid_body" };
+    }
+    const orderId = decoded?.data?.merchantTransactionId;
+    if (!orderId) {
+      await this.repository.recordAudit({ action: "webhook_rejected", actor, result: "missing_order_id" });
+      return { ok: false, reason: "missing_order_id" };
+    }
+    await this.repository.recordAudit({
+      action: "webhook_received",
+      actor,
+      result: "ok",
+      detail: { orderId, code: decoded?.code },
+    });
+    try {
+      const r = await this.confirmByStatus({ orderId, actor });
+      return { ok: true, status: r.status };
+    } catch (e) {
+      await this.repository.recordAudit({ action: "webhook_error", actor, result: "error", detail: e.message });
+      return { ok: false, reason: e.message };
+    }
   }
 
   /**
