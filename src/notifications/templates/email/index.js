@@ -355,6 +355,55 @@ export const emailTemplates = {
     }),
   },
 
+  // ---- Internal ADMIN alerts (sent to the business's own inbox, not the
+  // customer). The template context is the customer's booking details so staff
+  // can act. Rendered from the ADMIN POV, paired with the WhatsApp admin alert.
+  [NotificationEvents.ADMIN_BOOKING_UNPAID]: {
+    subject: "🆕 New booking (UNPAID) {{bookingId}} — action needed",
+    html: emailLayout({
+      title: "New Booking — Payment to Collect",
+      preheader: "A new booking needs manual confirmation and payment.",
+      content: `
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">A new booking has been placed <strong>without an online payment</strong>. Please contact the customer to confirm the trip and collect payment.</p>
+        ${detailTable(
+          detailRow("Booking ID", "{{bookingId}}") +
+            detailRow("Customer", "{{customerName}}") +
+            detailRow("Phone", "{{customerPhone}}") +
+            detailRow("Service / Vehicle", "{{vehicle}}") +
+            detailRow("Trip Dates", "{{tripDate}}") +
+            detailRow("Trip Type", "{{tripType}}") +
+            detailRow("Pickup", "{{pickup}}") +
+            detailRow("Drop", "{{drop}}") +
+            detailRow("Fare to Collect", "₹{{paymentAmount}}")
+        )}
+        <p style="font-size:13px;color:#71717a;">☎️ Call the customer at {{customerPhone}} to confirm and arrange payment.</p>`,
+    }),
+  },
+
+  [NotificationEvents.ADMIN_BOOKING_PAID]: {
+    subject: "💰 New PAID booking {{bookingId}} — trip confirmed",
+    html: emailLayout({
+      title: "New Paid Booking",
+      preheader: "Payment received online — a new trip is confirmed.",
+      content: `
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">A new booking has been <strong>paid online</strong> and is confirmed. Details for scheduling and driver assignment are below.</p>
+        ${detailTable(
+          detailRow("Booking ID", "{{bookingId}}") +
+            detailRow("Customer", "{{customerName}}") +
+            detailRow("Phone", "{{customerPhone}}") +
+            detailRow("Service / Vehicle", "{{vehicle}}") +
+            detailRow("Trip Dates", "{{tripDate}}") +
+            detailRow("Trip Type", "{{tripType}}") +
+            detailRow("Pickup", "{{pickup}}") +
+            detailRow("Drop", "{{drop}}") +
+            detailRow("Amount Paid", "₹{{paymentAmount}}") +
+            detailRow("Invoice No.", "{{invoiceNumber}}") +
+            detailRow("Status", "{{paymentStatus}}")
+        )}
+        <p style="font-size:13px;color:#71717a;">Assign a driver and schedule the trip from the admin dashboard.</p>`,
+    }),
+  },
+
   // Safe fallback for any event without a dedicated template (extension point).
   generic: {
     subject: "Update on your {{companyName}} request",

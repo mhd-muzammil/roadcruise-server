@@ -61,12 +61,15 @@ export const config = {
   adminToken: process.env.NOTIF_ADMIN_TOKEN || null,
   isProduction: process.env.NODE_ENV === "production",
 
-  // Admin alert recipient — receives a WhatsApp ping for EVERY booking (paid or
-  // unpaid) with the customer's details, so staff can act. Set ADMIN_WHATSAPP to
-  // the admin's WhatsApp number in E.164 form (e.g. +919876543210). Falls back
-  // to SUPPORT_PHONE. If neither is set, the admin alert is silently skipped.
+  // Admin alert recipient — receives an Email + WhatsApp ping for EVERY booking
+  // (paid or unpaid) with the customer's details, so staff can act. Set
+  // ADMIN_WHATSAPP to the admin's WhatsApp number in E.164 form (e.g.
+  // +919876543210) and ADMIN_EMAIL to the staff inbox. They fall back to
+  // SUPPORT_PHONE / SUPPORT_EMAIL respectively. A channel whose address is unset
+  // is silently SKIPPED by the engine (never a failure).
   admin: {
     name: process.env.ADMIN_NAME || "Karthik",
+    email: process.env.ADMIN_EMAIL || process.env.SUPPORT_EMAIL || null,
     whatsapp: process.env.ADMIN_WHATSAPP || process.env.SUPPORT_PHONE || null,
   },
 

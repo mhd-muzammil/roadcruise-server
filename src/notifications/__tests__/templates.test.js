@@ -15,6 +15,17 @@ test("resolveTemplate returns a def for booking.created on all 3 channels (no fa
   }
 });
 
+test("admin booking alerts resolve dedicated email + whatsapp templates (no fallback)", () => {
+  for (const ev of [NotificationEvents.ADMIN_BOOKING_PAID, NotificationEvents.ADMIN_BOOKING_UNPAID]) {
+    for (const channel of [Channels.EMAIL, Channels.WHATSAPP]) {
+      const { def, usedFallback } = resolveTemplate(channel, ev);
+      assert.ok(def, `expected a def for ${ev}/${channel}`);
+      assert.equal(usedFallback, false, `should not fall back for ${ev}/${channel}`);
+      assert.ok(def.subject || def.html || def.text, `def for ${ev}/${channel} should have content`);
+    }
+  }
+});
+
 test("unknown event falls back to generic with usedFallback=true", () => {
   for (const channel of [Channels.EMAIL, Channels.SMS, Channels.WHATSAPP]) {
     const { def, usedFallback } = resolveTemplate(channel, "totally.unknown.event");

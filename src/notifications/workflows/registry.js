@@ -23,15 +23,16 @@ export function defaultRecipients(payload = {}) {
 
 /**
  * Admin recipient resolver. Ignores the customer's contact details and routes
- * the message to the business's own WhatsApp (config.admin.whatsapp). Used only
- * by the internal ADMIN_* alert events. If no admin number is configured the
- * whatsapp recipient is null and the engine SKIPS the channel (no crash).
+ * the message to the business's own inbox + WhatsApp (config.admin.email /
+ * config.admin.whatsapp). Used only by the internal ADMIN_* alert events. SMS is
+ * intentionally off for admin alerts. If an admin address is not configured, its
+ * channel recipient is null and the engine SKIPS that channel (no crash).
  */
 export function adminRecipients() {
   return {
     customerId: "admin",
     name: config.admin?.name || "Admin",
-    email: null,
+    email: config.admin?.email || null,
     sms: null,
     whatsapp: config.admin?.whatsapp || null,
   };
@@ -109,9 +110,9 @@ export const workflows = {
   [NotificationEvents.PASSWORD_RESET]: base([Channels.EMAIL]),
   [NotificationEvents.EMAIL_VERIFICATION]: base([Channels.EMAIL]),
 
-  // Internal admin alerts -> the business's own WhatsApp only.
-  [NotificationEvents.ADMIN_BOOKING_PAID]: base([Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
-  [NotificationEvents.ADMIN_BOOKING_UNPAID]: base([Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
+  // Internal admin alerts -> the business's own inbox (Email) + WhatsApp.
+  [NotificationEvents.ADMIN_BOOKING_PAID]: base([Channels.EMAIL, Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
+  [NotificationEvents.ADMIN_BOOKING_UNPAID]: base([Channels.EMAIL, Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
 
   __default: base(),
 };

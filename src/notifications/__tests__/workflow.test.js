@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { defaultRecipients, getWorkflow, workflows } from "../workflows/registry.js";
+import { adminRecipients, defaultRecipients, getWorkflow, workflows } from "../workflows/registry.js";
 import { Channels, NotificationEvents } from "../config/events.js";
+import config from "../config/notification.config.js";
 
 test("defaultRecipients maps channel keys correctly (channel-key regression)", () => {
   const r = defaultRecipients({
@@ -44,6 +45,23 @@ test("getWorkflow returns the booking.created workflow", () => {
   const wf = getWorkflow(NotificationEvents.BOOKING_CREATED);
   assert.equal(wf, workflows[NotificationEvents.BOOKING_CREATED]);
   assert.deepEqual(wf.channels, [Channels.EMAIL, Channels.SMS, Channels.WHATSAPP]);
+});
+
+test("adminRecipients routes to the business's own inbox + WhatsApp (email key present, sms off)", () => {
+  const r = adminRecipients();
+  assert.equal(r.customerId, "admin");
+  assert.ok("email" in r, "adminRecipients must expose an email key so admin gets emailed");
+  assert.equal(r.email, config.admin.email, "admin email comes from config (ADMIN_EMAIL/SUPPORT_EMAIL)");
+  assert.equal(r.sms, null, "admin SMS is intentionally off");
+  assert.equal(r.whatsapp, config.admin.whatsapp, "admin WhatsApp comes from config");
+});
+
+test("admin booking alerts fan out to email + whatsapp via adminRecipients", () => {
+  for (const ev of [NotificationEvents.ADMIN_BOOKING_PAID, NotificationEvents.ADMIN_BOOKING_UNPAID]) {
+    const wf = getWorkflow(ev);
+    assert.deepEqual(wf.channels, [Channels.EMAIL, Channels.WHATSAPP], `${ev} must target email + whatsapp`);
+    assert.equal(wf.resolveRecipients, adminRecipients, `${ev} must use the admin recipient resolver`);
+  }
 });
 
 test("getWorkflow returns __default for an unknown event", () => {

@@ -142,7 +142,11 @@ All events are stable string constants in `config/events.js`. The channels each 
 | `CUSTOMER_REGISTERED` | `customer.registered` | ✅ | — | ✅ |
 | `OTP_REQUESTED` | `auth.otp_requested` | ✅ | ✅ | — |
 | `PASSWORD_RESET` | `auth.password_reset` | ✅ | — | — |
+| `ADMIN_BOOKING_PAID` | `admin.booking_paid` | ✅ | — | ✅ |
+| `ADMIN_BOOKING_UNPAID` | `admin.booking_unpaid` | ✅ | — | ✅ |
 | `__default` (fallback) | — | ✅ | ✅ | ✅ |
+
+> **Both points of view on a booking.** A booking notifies the **customer** (`BOOKING_CREATED` → Email + SMS + WhatsApp, customer POV) and the **business/admin** (`ADMIN_BOOKING_UNPAID` for pay-on-arrival, `ADMIN_BOOKING_PAID` after an online payment → Email + WhatsApp, admin POV). The admin events use `adminRecipients` (routes to `ADMIN_EMAIL`/`ADMIN_WHATSAPP`, falling back to `SUPPORT_EMAIL`/`SUPPORT_PHONE`) and carry the customer's details in their context so staff can act. SMS is intentionally off for admin alerts.
 
 > **Note on auth flows:** the `OTP_REQUESTED` and `PASSWORD_RESET` templates reference `{{otp}}` / `{{resetLink}}`, which are **not** part of `defaultContext`. A dedicated `buildContext` for those events must supply `otp` (and `resetLink` for the email reset) when those flows are wired up. This is a registered extension point — the default workflow does not currently emit OTP/reset events.
 
@@ -507,6 +511,9 @@ All config comes from env (`config/notification.config.js`). Booleans accept `1/
 | `SUPPORT_EMAIL` | `support@roadcruise.com` | Branding `{{supportEmail}}`; DLQ alert fallback. |
 | `COMPANY_URL` | `https://roadcruise.example` | Branding `{{websiteUrl}}`. |
 | `COMPANY_LOGO_URL` | `""` | Branding `{{logoUrl}}`. |
+| `ADMIN_NAME` | `Karthik` | Admin display name in admin-alert context. |
+| `ADMIN_EMAIL` | `SUPPORT_EMAIL` | Admin inbox for booking alerts (Email). Unset → email channel skipped. |
+| `ADMIN_WHATSAPP` | `SUPPORT_PHONE` | Admin WhatsApp for booking alerts. Unset → whatsapp channel skipped. |
 | `NOTIF_ADMIN_TOKEN` | _unset_ | Admin API token (REQUIRED in production). |
 | `NODE_ENV` | _unset_ | `production` makes the admin token mandatory (fail-closed). |
 | `NOTIF_DLQ_ALERT_ENABLED` | `true` | Email ops alert on dead-letter. |

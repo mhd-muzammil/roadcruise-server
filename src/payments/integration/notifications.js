@@ -12,7 +12,7 @@ const base = (booking, extra = {}) => ({ ...booking, ...extra });
  * Verified payment success. Sends exactly:
  *   1. INVOICE_GENERATED   -> customer Email + WhatsApp (the invoice/receipt)
  *   2. BOOKING_CONFIRMED   -> customer SMS + WhatsApp (trip confirmed)
- *   3. ADMIN_BOOKING_PAID  -> the business's own WhatsApp (customer details)
+ *   3. ADMIN_BOOKING_PAID  -> the business's own Email + WhatsApp (customer details)
  * (Channel targeting is defined in notifications/workflows/registry.js.)
  */
 export function emitPaymentSucceeded(booking, { amount, invoiceNumber, receiptNumber } = {}) {
