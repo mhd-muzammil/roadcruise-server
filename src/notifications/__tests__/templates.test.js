@@ -9,8 +9,10 @@ test("resolveTemplate returns a def for booking.created on all 3 channels (no fa
     const { def, usedFallback } = resolveTemplate(channel, NotificationEvents.BOOKING_CREATED);
     assert.ok(def, `expected a def for ${channel}`);
     assert.equal(usedFallback, false, `should not fall back for ${channel}`);
-    // each channel def must carry renderable content
-    const hasContent = def.subject || def.html || def.text;
+    // each channel def must carry renderable content. A def may be a plain
+    // object OR a `(ctx) => ({subject, html, text})` function (engine contract),
+    // used for context-aware templates like the booking/admin alerts.
+    const hasContent = typeof def === "function" || def.subject || def.html || def.text;
     assert.ok(hasContent, `def for ${channel} should have content`);
   }
 });
@@ -21,7 +23,10 @@ test("admin booking alerts resolve dedicated email + whatsapp templates (no fall
       const { def, usedFallback } = resolveTemplate(channel, ev);
       assert.ok(def, `expected a def for ${ev}/${channel}`);
       assert.equal(usedFallback, false, `should not fall back for ${ev}/${channel}`);
-      assert.ok(def.subject || def.html || def.text, `def for ${ev}/${channel} should have content`);
+      assert.ok(
+        typeof def === "function" || def.subject || def.html || def.text,
+        `def for ${ev}/${channel} should have content`
+      );
     }
   }
 });

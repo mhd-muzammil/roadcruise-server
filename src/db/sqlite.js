@@ -12,11 +12,14 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { dataDir } from "../dataDir.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const CONFIG_DIR = path.resolve(__dirname, "../config");
+// DB, legacy db.json and backups all live here. Under DATA_DIR (a mounted
+// volume) when set; otherwise the in-repo src/config folder as before.
+const CONFIG_DIR = dataDir("config", path.resolve(__dirname, "../config"));
 const LEGACY_JSON = path.join(CONFIG_DIR, "db.json");
 
 // Resolved lazily (on first getDb) so SQLITE_PATH can be set by tests before the

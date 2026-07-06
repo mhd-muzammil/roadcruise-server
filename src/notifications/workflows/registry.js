@@ -62,10 +62,34 @@ export function defaultContext(payload = {}) {
     paymentAmount: payload.paymentAmount ?? payload.fare ?? "—",
     paymentStatus: payload.paymentStatus || payload.status || "—",
     invoiceNumber: payload.invoiceNumber || "—",
+    // ---- additive: context-specific booking details (vehicle / package forms).
+    // Empty-string defaults so templates can conditionally SHOW a row only when
+    // the value is actually present (see `has()` in templates/email/index.js).
+    packageName: payload.packageName || payload.package || "",
+    passengers: payload.passengers || "",
+    pickupTime: payload.pickupTime || "",
+    specialRequests: payload.notes || payload.specialRequests || "",
     // ---- additive: auth flows (password reset / email verification / OTP) ----
     resetLink: payload.resetLink || "",
     verificationLink: payload.verificationLink || "",
     otp: payload.otp || "",
+  };
+}
+
+/**
+ * Context builder for the website "Contact Us" enquiry events. Maps the enquiry
+ * payload ({ name, email, phone, subject, message }) onto template placeholders.
+ * Used by both CONTACT_ENQUIRY (to admin) and CONTACT_ACK (to the enquirer).
+ */
+export function contactContext(payload = {}) {
+  return {
+    ...config.branding,
+    customerName: payload.name || "Customer",
+    enquiryName: payload.name || "—",
+    enquiryEmail: payload.email || "—",
+    enquiryPhone: payload.phone || "—",
+    subject: payload.subject || "General Enquiry",
+    message: payload.message || "—",
   };
 }
 
@@ -113,6 +137,11 @@ export const workflows = {
   // Internal admin alerts -> the business's own inbox (Email) + WhatsApp.
   [NotificationEvents.ADMIN_BOOKING_PAID]: base([Channels.EMAIL, Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
   [NotificationEvents.ADMIN_BOOKING_UNPAID]: base([Channels.EMAIL, Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
+
+  // Contact-form enquiry -> business inbox (Email). Acknowledgement -> the
+  // person who wrote in (Email). Both use the contact context builder.
+  [NotificationEvents.CONTACT_ENQUIRY]: base([Channels.EMAIL], { resolveRecipients: adminRecipients, buildContext: contactContext }),
+  [NotificationEvents.CONTACT_ACK]: base([Channels.EMAIL], { buildContext: contactContext }),
 
   __default: base(),
 };

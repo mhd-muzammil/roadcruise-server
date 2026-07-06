@@ -1,7 +1,9 @@
+import { randomUUID } from "crypto";
 import { getPaymentService } from "../core/PaymentService.js";
 import { getPaymentRepository } from "../repository/PaymentRepository.js";
 import { config } from "../config/payment.config.js";
 import { PaymentStatus } from "../config/paymentEvents.js";
+import { signCheckout } from "../core/signature.js";
 import { generateInvoice, generateReceipt } from "../receipts/ReceiptService.js";
 import * as bookingBridge from "../integration/bookingBridge.js";
 
@@ -65,6 +67,25 @@ export const verify = async (req, res) => {
     if (e.code === "NOT_FOUND") return res.status(404).json({ error: e.message });
     res.status(500).json({ error: e.message });
   }
+};
+
+// POST /api/payments/mock/checkout  — MOCK-ONLY preview helper.
+// The mock gateway has no hosted widget, so the browser can't produce a valid
+// signed checkout result on its own (the signing secret never leaves the
+// server). This endpoint returns a validly-signed { orderId, paymentId,
+// signature } that the frontend feeds straight into /verify — letting a client
+// preview the full "pay online -> confirmed" flow WITHOUT a Razorpay account.
+// Hard-disabled unless PAYMENT_PROVIDER=mock and NOT production, so it can never
+// mint free confirmations against a real gateway or in prod.
+export const simulateCheckout = (req, res) => {
+  if (config.provider !== "mock" || config.isProduction) {
+    return res.status(404).json({ error: "Not found" });
+  }
+  const { orderId } = req.body || {};
+  if (!orderId) return res.status(400).json({ error: "orderId is required" });
+  const paymentId = `pay_mock_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
+  const signature = signCheckout(orderId, paymentId, config.mockSecret);
+  res.json({ orderId, paymentId, signature });
 };
 
 // POST /api/payments/webhook  — gateway -> us. Uses RAW body for signature.
@@ -193,6 +214,7 @@ export default {
   getConfig,
   createOrder,
   verify,
+  simulateCheckout,
   webhook,
   phonepeCallback,
   phonepeReturn,

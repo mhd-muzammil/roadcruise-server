@@ -124,13 +124,22 @@ export const whatsappTemplates = {
     buttons: [{ type: "url", text: "Reset Password", url: "{{websiteUrl}}" }],
   },
   // ---- Internal ADMIN alerts (sent to the business's own WhatsApp) ----
-  [NotificationEvents.ADMIN_BOOKING_PAID]: {
-    text:
-      "*{{companyName}}* — 💰 NEW PAID BOOKING\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}\n🚗 {{vehicle}}\n📅 {{tripDate}}\n💳 Paid: ₹{{paymentAmount}} (Invoice {{invoiceNumber}})\n\nPayment received online — trip confirmed.",
+  // Function form so package/pickup lines only appear when the booking has them.
+  [NotificationEvents.ADMIN_BOOKING_PAID]: (ctx) => {
+    const pkg = ctx.packageName ? `\n📦 ${ctx.packageName}` : "";
+    const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
+    return {
+      text:
+        `*{{companyName}}* — 💰 NEW PAID BOOKING\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💳 Paid: ₹{{paymentAmount}} (Invoice {{invoiceNumber}})\n\nPayment received online — trip confirmed.`,
+    };
   },
-  [NotificationEvents.ADMIN_BOOKING_UNPAID]: {
-    text:
-      "*{{companyName}}* — 🆕 NEW BOOKING (UNPAID)\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}\n🚗 {{vehicle}}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\n☎️ Please contact the customer to confirm and collect payment.",
+  [NotificationEvents.ADMIN_BOOKING_UNPAID]: (ctx) => {
+    const pkg = ctx.packageName ? `\n📦 ${ctx.packageName}` : "";
+    const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
+    return {
+      text:
+        `*{{companyName}}* — 🆕 NEW BOOKING (UNPAID)\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\n☎️ Please contact the customer to confirm and collect payment.`,
+    };
   },
   generic: {
     text: "*{{companyName}}*\nUpdate on {{bookingId}}. Contact {{supportPhone}} for details.",

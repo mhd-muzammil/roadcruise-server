@@ -2,6 +2,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import { JsonStore } from "../../notifications/repository/store.js";
+import { dataDir } from "../../dataDir.js";
 import { config } from "../config/auth.config.js";
 
 /**
@@ -13,7 +14,7 @@ import { config } from "../config/auth.config.js";
  *   { sessionId, userEmail, provider, device, browser, os, ip, userAgent,
  *     refreshJti, createdAt, lastActive, expiresAt, revoked, revokedAt, revokedBy }
  */
-const AUTH_DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../data");
+const AUTH_DATA_DIR = dataDir("auth", path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../data"));
 const store = new JsonStore("sessions.json", { sessions: [] }, AUTH_DATA_DIR);
 
 /** Best-effort device/browser/OS parse from a User-Agent (no dependency). */

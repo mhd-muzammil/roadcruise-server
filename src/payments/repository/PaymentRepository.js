@@ -1,6 +1,7 @@
 import path from "path";
 import { fileURLToPath } from "url";
 import { JsonStore } from "../../notifications/repository/store.js";
+import { dataDir } from "../../dataDir.js";
 import { PaymentStatus, TERMINAL_STATES } from "../config/paymentEvents.js";
 import { generatePaymentId } from "../core/receiptNumber.js";
 
@@ -19,7 +20,7 @@ import { generatePaymentId } from "../core/receiptNumber.js";
  *     idempotencyKey, refunds[], capturedAt, refundedAt, createdAt, updatedAt }
  */
 const __filename = fileURLToPath(import.meta.url);
-const PAYMENTS_DATA_DIR = path.resolve(path.dirname(__filename), "../data");
+const PAYMENTS_DATA_DIR = dataDir("payments", path.resolve(path.dirname(__filename), "../data"));
 
 export class PaymentRepository {
   constructor() {

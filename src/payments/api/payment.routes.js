@@ -26,6 +26,8 @@ const router = express.Router();
 router.get("/config", ctrl.getConfig);
 router.post("/orders", ctrl.createOrder);
 router.post("/verify", ctrl.verify);
+// Mock-only preview helper (returns a signed checkout result for the demo flow).
+router.post("/mock/checkout", ctrl.simulateCheckout);
 router.post("/webhook", ctrl.webhook);
 
 // PhonePe redirect-gateway endpoints (signature-verified / status-confirmed).

@@ -17,8 +17,17 @@ import { roleAtLeast, Roles } from "../auth/rbac/roles.js";
 import { getPaymentService } from "../payments/index.js";
 import { config as paymentConfig } from "../payments/config/payment.config.js";
 
-// A short booking id, kept in the existing RC-BK-#### shape.
-const newBookingId = () => `RC-BK-${Math.floor(1000 + Math.random() * 9000)}`;
+// Customer-facing booking reference in the RDZ### shape (RDZ001, RDZ002, …).
+// Sequential: continue from the highest existing RDZ number so references never
+// collide and read cleanly. Legacy RC-BK-#### ids are ignored by the scan.
+const newBookingId = () => {
+  let max = 0;
+  for (const b of listBookings()) {
+    const m = /^RDZ(\d+)$/.exec(b.id || "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `RDZ${String(max + 1).padStart(3, "0")}`;
+};
 
 /**
  * GET /api/bookings
@@ -41,7 +50,11 @@ export const getBookings = (req, res) => {
  *   - "arrival" -> status "Pending"; an admin approves it manually later.
  */
 export const createBooking = async (req, res) => {
-  const { fromDate, toDate, tripType, item, fare, paymentMethod, paymentMode, phone, name } = req.body || {};
+  const {
+    fromDate, toDate, tripType, item, fare, paymentMethod, paymentMode, phone, name,
+    // Context-specific details from the vehicle / package / general forms.
+    category, pickup, drop, vehicle, packageName, passengers, pickupTime, notes,
+  } = req.body || {};
 
   if (!fromDate || !toDate || !item) {
     return res.status(400).json({ error: "Missing required booking details (item, fromDate, toDate)" });
@@ -70,6 +83,18 @@ export const createBooking = async (req, res) => {
     status: online ? "PendingPayment" : "Pending",
     paymentMethod: paymentMethod || (online ? "Online" : "Pay on arrival"),
     driver: "None",
+    // Context-specific details (persisted so both customer + admin notifications,
+    // including the post-payment ones emitted by the payment module, can show
+    // them). `vehicle` is the vehicle name for a vehicle booking, or the
+    // preferred vehicle for a package; `packageName` names the chosen package.
+    category: category || "general",
+    pickup: pickup || "",
+    drop: drop || "",
+    vehicle: vehicle || "",
+    packageName: packageName || "",
+    passengers: passengers || "",
+    pickupTime: pickupTime || "",
+    notes: notes || "",
     createdAt: new Date().toISOString(),
   };
 

@@ -2,6 +2,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import { JsonStore } from "../../notifications/repository/store.js";
+import { dataDir } from "../../dataDir.js";
 
 /**
  * Immutable, append-only authentication audit trail. Records every security-
@@ -9,7 +10,7 @@ import { JsonStore } from "../../notifications/repository/store.js";
  * refresh/revoke, role changes, lockouts, suspicious activity. Entries are never
  * updated or deleted. NEVER stores passwords or token secrets.
  */
-const AUTH_DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../data");
+const AUTH_DATA_DIR = dataDir("auth", path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../data"));
 const store = new JsonStore("auth_audit.json", { entries: [] }, AUTH_DATA_DIR);
 
 export const AuditActions = Object.freeze({

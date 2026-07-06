@@ -2,6 +2,17 @@ import { NotificationEvents } from "../../config/events.js";
 import { emailLayout, detailTable, detailRow } from "./layout.js";
 
 /**
+ * True when a context value is present and meaningful (not empty / not the "—"
+ * placeholder). Used by the function-form templates to include a detail row
+ * ONLY when the booking actually carries that field — so a vehicle booking
+ * doesn't show an empty "Package" row, a package booking doesn't show "Drop", etc.
+ */
+const has = (v) => v != null && v !== "" && v !== "—";
+
+/** Conditionally render a detail row: `row(cond, label, value)`. */
+const row = (cond, label, value) => (cond ? detailRow(label, value) : "");
+
+/**
  * EMAIL template library: eventKey -> { subject, html }.
  *
  * Key flows (booking + payment) are implemented here as the reference standard.
@@ -25,7 +36,8 @@ export const emailTemplates = {
     }),
   },
 
-  [NotificationEvents.BOOKING_CREATED]: {
+  // Context-aware: rows adapt to the booking type (general / vehicle / package).
+  [NotificationEvents.BOOKING_CREATED]: (ctx) => ({
     subject: "We received your booking {{bookingId}} — {{companyName}}",
     html: emailLayout({
       title: "Booking Received",
@@ -34,13 +46,19 @@ export const emailTemplates = {
         <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, thanks for choosing {{companyName}}. We've received your booking and it is being processed.</p>
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
-            detailRow("Service / Vehicle", "{{vehicle}}") +
+            row(has(ctx.packageName), "Package", "{{packageName}}") +
+            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
+            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
+            row(has(ctx.drop), "Drop", "{{drop}}") +
             detailRow("Trip Dates", "{{tripDate}}") +
-            detailRow("Trip Type", "{{tripType}}")
+            detailRow("Trip Type", "{{tripType}}") +
+            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
+            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
+            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}")
         )}
         <p style="font-size:13px;color:#71717a;">You'll get a confirmation once payment is verified.</p>`,
     }),
-  },
+  }),
 
   [NotificationEvents.BOOKING_CONFIRMED]: {
     subject: "Booking Confirmed ✓ {{bookingId}} — {{companyName}}",
@@ -358,7 +376,7 @@ export const emailTemplates = {
   // ---- Internal ADMIN alerts (sent to the business's own inbox, not the
   // customer). The template context is the customer's booking details so staff
   // can act. Rendered from the ADMIN POV, paired with the WhatsApp admin alert.
-  [NotificationEvents.ADMIN_BOOKING_UNPAID]: {
+  [NotificationEvents.ADMIN_BOOKING_UNPAID]: (ctx) => ({
     subject: "🆕 New booking (UNPAID) {{bookingId}} — action needed",
     html: emailLayout({
       title: "New Booking — Payment to Collect",
@@ -369,18 +387,22 @@ export const emailTemplates = {
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Customer", "{{customerName}}") +
             detailRow("Phone", "{{customerPhone}}") +
-            detailRow("Service / Vehicle", "{{vehicle}}") +
+            row(has(ctx.packageName), "Package", "{{packageName}}") +
+            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
             detailRow("Trip Dates", "{{tripDate}}") +
             detailRow("Trip Type", "{{tripType}}") +
-            detailRow("Pickup", "{{pickup}}") +
-            detailRow("Drop", "{{drop}}") +
+            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
+            row(has(ctx.drop), "Drop", "{{drop}}") +
+            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
+            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
+            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}") +
             detailRow("Fare to Collect", "₹{{paymentAmount}}")
         )}
         <p style="font-size:13px;color:#71717a;">☎️ Call the customer at {{customerPhone}} to confirm and arrange payment.</p>`,
     }),
-  },
+  }),
 
-  [NotificationEvents.ADMIN_BOOKING_PAID]: {
+  [NotificationEvents.ADMIN_BOOKING_PAID]: (ctx) => ({
     subject: "💰 New PAID booking {{bookingId}} — trip confirmed",
     html: emailLayout({
       title: "New Paid Booking",
@@ -391,16 +413,55 @@ export const emailTemplates = {
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Customer", "{{customerName}}") +
             detailRow("Phone", "{{customerPhone}}") +
-            detailRow("Service / Vehicle", "{{vehicle}}") +
+            row(has(ctx.packageName), "Package", "{{packageName}}") +
+            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
             detailRow("Trip Dates", "{{tripDate}}") +
             detailRow("Trip Type", "{{tripType}}") +
-            detailRow("Pickup", "{{pickup}}") +
-            detailRow("Drop", "{{drop}}") +
+            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
+            row(has(ctx.drop), "Drop", "{{drop}}") +
+            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
+            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
+            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}") +
             detailRow("Amount Paid", "₹{{paymentAmount}}") +
             detailRow("Invoice No.", "{{invoiceNumber}}") +
             detailRow("Status", "{{paymentStatus}}")
         )}
         <p style="font-size:13px;color:#71717a;">Assign a driver and schedule the trip from the admin dashboard.</p>`,
+    }),
+  }),
+
+  // ---- Website "Contact Us" enquiry ----
+  // To the business inbox: the full enquiry so staff can respond.
+  [NotificationEvents.CONTACT_ENQUIRY]: {
+    subject: "📩 New enquiry: {{subject}} — from {{enquiryName}}",
+    html: emailLayout({
+      title: "New Website Enquiry",
+      preheader: "A visitor submitted the Contact Us form.",
+      content: `
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">A new enquiry was submitted through the {{companyName}} website. Details are below — reply directly to the customer's email to respond.</p>
+        ${detailTable(
+          detailRow("Name", "{{enquiryName}}") +
+            detailRow("Email", "{{enquiryEmail}}") +
+            detailRow("Phone", "{{enquiryPhone}}") +
+            detailRow("Subject", "{{subject}}")
+        )}
+        <p style="font-size:13px;color:#71717a;margin-bottom:6px;">Message:</p>
+        <div style="font-size:14px;line-height:1.6;color:#18181b;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:14px 16px;white-space:pre-wrap;">{{message}}</div>`,
+    }),
+  },
+
+  // Acknowledgement back to the person who wrote in.
+  [NotificationEvents.CONTACT_ACK]: {
+    subject: "We received your message — {{companyName}}",
+    html: emailLayout({
+      title: "Thanks for reaching out",
+      preheader: "We've received your enquiry and will be in touch soon.",
+      content: `
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, thank you for contacting {{companyName}}. We've received your enquiry and our team will get back to you shortly — typically within a few hours.</p>
+        ${detailTable(detailRow("Subject", "{{subject}}"))}
+        <p style="font-size:13px;color:#71717a;margin-bottom:6px;">Your message:</p>
+        <div style="font-size:14px;line-height:1.6;color:#18181b;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:14px 16px;white-space:pre-wrap;">{{message}}</div>
+        <p style="font-size:13px;color:#71717a;margin-top:16px;">For anything urgent, call us at {{supportPhone}}.</p>`,
     }),
   },
 

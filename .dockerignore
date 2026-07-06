@@ -1,0 +1,41 @@
+# Dependencies — reinstalled inside the image
+node_modules
+npm-debug.log*
+
+# Secrets / env — injected by Dokploy at runtime, never baked into the image
+.env
+.env.*
+
+# Persistent data — belongs on the mounted volume ($DATA_DIR), not the image.
+# (These are the in-repo fallback locations used only for local dev.)
+src/config/*.db
+src/config/*.db-wal
+src/config/*.db-shm
+src/config/backups/
+src/config/db.json
+src/config/db.json.migrated.bak
+src/**/data/
+
+# Tests
+src/**/__tests__/
+
+# Docs, deploy notes, process-manager config (not needed at runtime)
+DEPLOY.md
+docs/
+ecosystem.config.cjs
+*.md
+
+# Local temp / build scripts
+*.mjs
+
+# VCS + editor + misc
+.git
+.gitignore
+.vscode
+.idea
+coverage
+tmp
+temp
+*.log
+Dockerfile
+.dockerignore

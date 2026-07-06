@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import authRoutes from "./routes/auth.routes.js";
 import bookingRoutes from "./routes/booking.routes.js";
+import contactRoutes from "./routes/contact.routes.js";
 import notifications from "./notifications/index.js";
 import payments from "./payments/index.js";
 import authOAuth from "./auth/index.js";
@@ -23,6 +24,7 @@ app.use(
 // API Mount points
 app.use("/api/auth", authRoutes);
 app.use("/api/bookings", bookingRoutes);
+app.use("/api/contact", contactRoutes);
 
 // Google OAuth 2.0 (additive, non-breaking): mounts extra /api/auth/* routes
 // (/google, /nonce, /google/config) alongside the existing login/register.

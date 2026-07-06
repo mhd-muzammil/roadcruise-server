@@ -39,6 +39,11 @@ export const NotificationEvents = Object.freeze({
   PASSWORD_RESET: "auth.password_reset",
   EMAIL_VERIFICATION: "auth.email_verification",
 
+  // Website "Contact Us" enquiry. ENQUIRY -> the business inbox (staff act on
+  // it); ACK -> an acknowledgement back to the person who wrote in.
+  CONTACT_ENQUIRY: "contact.enquiry",
+  CONTACT_ACK: "contact.acknowledgement",
+
   // Internal ADMIN alerts — sent to the business's own WhatsApp (not the
   // customer) so staff can act on each booking. PAID = money already collected
   // online; UNPAID = customer must be contacted to collect payment manually.
