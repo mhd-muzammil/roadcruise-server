@@ -47,9 +47,18 @@ export const googleLogin = async (req, res) => {
 
   try {
     const result = await service().authenticateWithGoogle({ idToken, nonce });
-    // Return the SAME user-payload shape as existing login, plus an additive
-    // token. Frontend stores `user` in localStorage exactly as before.
-    res.status(200).json({ ...result.user, token: result.token, firstLogin: result.firstLogin, linked: result.linked });
+    // Return the SAME token fields as the email/password login (accessToken /
+    // refreshToken / sessionId) so the frontend's `authHeaders` finds the token.
+    // `token` is kept as a backward-compat alias of the access token.
+    res.status(200).json({
+      ...result.user,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      sessionId: result.sessionId,
+      token: result.token,
+      firstLogin: result.firstLogin,
+      linked: result.linked,
+    });
   } catch (e) {
     if (e.code === "INVALID_TOKEN") return res.status(401).json({ error: e.message });
     if (e.code === "LINK_REQUIRED") return res.status(409).json({ error: e.message });
