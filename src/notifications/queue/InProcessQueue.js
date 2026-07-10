@@ -10,11 +10,14 @@ import { Queue } from "./Queue.js";
  * Drop-in replaceable by BullMQQueue when REDIS_URL is set.
  */
 export class InProcessQueue extends Queue {
-  constructor({ repository, concurrency = 4, pollMs = 1000 }) {
+  constructor({ repository, concurrency = 4, pollMs = 1000, recoverEveryMs = 60000 }) {
     super();
     this.repository = repository;
     this.concurrency = concurrency;
     this.pollMs = pollMs;
+    // How often to sweep for records orphaned in PROCESSING (crash/restart mid-send).
+    this.recoverEveryMs = recoverEveryMs;
+    this._lastRecover = 0;
     this.inFlight = new Set();
     this.processor = null;
     this.timer = null;
@@ -27,6 +30,7 @@ export class InProcessQueue extends Queue {
     const tick = async () => {
       if (!this.running) return;
       try {
+        await this._recoverStale();
         await this._drain();
       } catch (err) {
         console.error("[notifications] queue tick error:", err.message);
@@ -35,6 +39,16 @@ export class InProcessQueue extends Queue {
       }
     };
     this.timer = setTimeout(tick, 0);
+  }
+
+  /** Throttled sweep: return records stuck in PROCESSING to the retry path. */
+  async _recoverStale() {
+    if (typeof this.repository.recoverStale !== "function") return;
+    const now = Date.now();
+    if (now - this._lastRecover < this.recoverEveryMs) return;
+    this._lastRecover = now;
+    const n = await this.repository.recoverStale();
+    if (n) console.log(`[notifications] queue recovered ${n} stale record(s) from PROCESSING`);
   }
 
   async _drain() {

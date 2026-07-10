@@ -31,6 +31,15 @@ export class NotificationService {
       console.log("[notifications] engine DISABLED via NOTIF_ENABLED=false");
       return;
     }
+    // Recover records orphaned in PROCESSING by a prior crash/restart, so their
+    // messages (e.g. a password-reset email) actually get sent instead of being
+    // stuck forever. Fire-and-forget; the worker below then picks them up.
+    if (typeof this.repository.recoverStale === "function") {
+      this.repository
+        .recoverStale()
+        .then((n) => n && console.log(`[notifications] recovered ${n} stale record(s) from PROCESSING`))
+        .catch((e) => console.error("[notifications] stale recovery failed:", e.message));
+    }
     this.queue.start((id) => this.dispatcher.process(id));
     for (const event of ALL_EVENTS) {
       eventBus.on(event, (envelope) => this.handleEvent(envelope).catch((e) =>

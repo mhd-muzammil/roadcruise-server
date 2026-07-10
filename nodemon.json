@@ -1,0 +1,16 @@
+{
+  "watch": ["src"],
+  "ext": "js,mjs,cjs",
+  "ignore": [
+    "src/**/data/**",
+    "src/config/backups/**",
+    "src/config/*.db",
+    "src/config/*.db-shm",
+    "src/config/*.db-wal",
+    "src/config/*.db-journal",
+    "src/config/db.json",
+    "src/config/*.bak",
+    "src/**/__tests__/**",
+    "src/**/*.test.js"
+  ]
+}

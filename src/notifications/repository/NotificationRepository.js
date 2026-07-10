@@ -142,6 +142,35 @@ export class JsonNotificationRepository {
       );
   }
 
+  /**
+   * Crash recovery. A record set to PROCESSING by a worker that then died (or was
+   * reloaded by nodemon) mid-send is orphaned: findDue() ignores PROCESSING and
+   * the Dispatcher won't reprocess it, so it is stuck forever and the message is
+   * never delivered. Any PROCESSING record untouched for `staleMs` is assumed
+   * abandoned and reset to FAILED with an immediate nextAttemptAt, so the normal
+   * retry path re-sends it. `staleMs` must comfortably exceed a real send (incl.
+   * SMTP socket timeout) so we never yank a genuinely in-flight record.
+   * Returns the number recovered.
+   */
+  async recoverStale(staleMs = 120000, now = Date.now()) {
+    const isStale = (n) =>
+      n.status === DeliveryStatus.PROCESSING &&
+      now - new Date(n.updatedAt || n.createdAt).getTime() > staleMs;
+    // Cheap read-only pre-check so the common (nothing-stale) case never writes.
+    if (!this.store.read().notifications.some(isStale)) return 0;
+    let recovered = 0;
+    await this.store.update((db) => {
+      for (const n of db.notifications) {
+        if (!isStale(n)) continue;
+        n.status = DeliveryStatus.FAILED;
+        n.nextAttemptAt = new Date(now).toISOString();
+        n.error = "recovered from stale PROCESSING (worker restart/crash)";
+        recovered += 1;
+      }
+    });
+    return recovered;
+  }
+
   async pushDeadLetter(record) {
     await this.store.update((db) => {
       db.deadLetters.push({ ...record, movedAt: new Date().toISOString() });
