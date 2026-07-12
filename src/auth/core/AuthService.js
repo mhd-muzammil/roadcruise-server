@@ -41,6 +41,21 @@ import { notifyCustomerRegistered } from "../../notifications/integration/hooks.
 const authErr = (message, code, status = 400) => Object.assign(new Error(message), { code, status });
 
 /**
+ * Build an absolute FRONTEND link for emailed flows. The client is a HashRouter
+ * SPA, so routes live in the URL fragment:
+ *   <appBaseUrl>/#/reset-password?email=…&token=…
+ * The "#" is added here rather than in APP_BASE_URL because dotenv truncates
+ * unquoted env values at "#" (inline-comment rule) — embedding it in the env
+ * var silently produced hash-less links that landed on the homepage.
+ */
+export const appLink = (path, params = {}) => {
+  const query = Object.entries(params)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .join("&");
+  return `${config.appBaseUrl}/#${path}${query ? `?${query}` : ""}`;
+};
+
+/**
  * AuthService — provider-agnostic authentication orchestrator. Knows nothing
  * about Google specifically beyond resolving the provider; the find/create/link
  * + token logic is identical for any future provider.
@@ -121,7 +136,7 @@ export class AuthService {
   async _sendVerification(user) {
     const token = randomBytes(32).toString("hex");
     setVerificationToken(user.email, token);
-    const verificationLink = `${config.appBaseUrl}/verify-email?email=${encodeURIComponent(user.email)}&token=${token}`;
+    const verificationLink = appLink("/verify-email", { email: user.email, token });
     notify(
       NotificationEvents.EMAIL_VERIFICATION,
       { email: user.email, name: user.name, verificationLink },
@@ -255,7 +270,7 @@ export class AuthService {
     if (user) {
       const token = randomBytes(32).toString("hex");
       setResetToken(user.email, token);
-      const resetLink = `${config.appBaseUrl}/reset-password?email=${encodeURIComponent(user.email)}&token=${token}`;
+      const resetLink = appLink("/reset-password", { email: user.email, token });
       notify(NotificationEvents.PASSWORD_RESET, { email: user.email, name: user.name, resetLink }, { actor: "auth-service" });
       await audit({ action: AuditActions.PASSWORD_RESET_REQUESTED, email: user.email, ip, userAgent, result: "ok" });
     }

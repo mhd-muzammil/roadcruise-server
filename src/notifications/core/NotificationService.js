@@ -92,11 +92,17 @@ export class NotificationService {
       }
       const address = valid.normalized;
 
+      // Business key from the RAW payload (domain truth), never the template
+      // context: defaultContext() fills bookingId with a "—" placeholder for
+      // non-booking events, which made the key CONSTANT per (event, recipient)
+      // and permanently deduped every later password-reset / verification /
+      // OTP email for that user. eventId (unique per emission) is the fallback,
+      // so replays of the SAME envelope still dedupe.
       const idk = idempotencyKey({
         event,
         channel,
         recipient: address,
-        businessKey: context.bookingId || eventId,
+        businessKey: payload.bookingId || payload.id || eventId,
       });
 
       // Atomic dedupe-and-insert: never send the same thing twice, even under

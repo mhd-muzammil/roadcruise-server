@@ -11,6 +11,16 @@ const int = (v, def) => {
   return Number.isFinite(n) ? n : def;
 };
 
+/**
+ * Normalize APP_BASE_URL to a bare origin: trim whitespace and strip any
+ * trailing "/" or "#". Older configs appended "/#" for the client's HashRouter,
+ * but dotenv treats an unquoted "#" as an inline comment and silently drops it
+ * (turning "https://site/#" into "https://site/"), which broke every emailed
+ * link. The hash segment is now appended in code — see appLink() in AuthService.
+ */
+export const normalizeAppBaseUrl = (raw) =>
+  String(raw || "http://localhost:5173").trim().replace(/[/#]+$/, "");
+
 export const config = {
   enabled: bool(process.env.OAUTH_ENABLED, true),
 
@@ -83,8 +93,9 @@ export const config = {
   resetTokenTtlSec: int(process.env.RESET_TOKEN_TTL_SEC, 60 * 30), // 30 min
   verifyTokenTtlSec: int(process.env.VERIFY_TOKEN_TTL_SEC, 60 * 60 * 24), // 24h
 
-  // Base URL used to build reset/verification links in emails.
-  appBaseUrl: process.env.APP_BASE_URL || "http://localhost:5173",
+  // Frontend origin used to build reset/verification links in emails.
+  // Always a bare origin (no trailing "/" or "#") — see normalizeAppBaseUrl.
+  appBaseUrl: normalizeAppBaseUrl(process.env.APP_BASE_URL),
 };
 
 /** Active Google verification mode. */
