@@ -461,7 +461,7 @@ From `config/auth.config.js` + `.env.example`. `int(...)`/`bool(...)` coercion w
 | `AUTH_RATE_MAX_SENSITIVE` | `5` | no | Max forgot/reset/verify per IP per window. |
 | `RESET_TOKEN_TTL_SEC` | `1800` (30m) | no | Reset-token lifetime. |
 | `VERIFY_TOKEN_TTL_SEC` | `86400` (24h) | no | Verification-token lifetime. |
-| `APP_BASE_URL` | `http://localhost:5173` | recommended | Frontend origin used to build emailed reset/verification links. Bare origin only — the server appends the HashRouter fragment (`/#/reset-password?…`) itself. Never include `#` in the value (dotenv truncates unquoted values at `#`). |
+| `APP_BASE_URL` | `http://localhost:5173` | recommended | Frontend origin used to build emailed reset/verification links. Bare origin only — the server appends the clean BrowserRouter path (`/reset-password?…`) itself. Never include `#` in the value (dotenv truncates unquoted values at `#`). |
 | `DEFAULT_USER_PHONE` | `+91 99999 99999` | no | Default phone for provisioned accounts. |
 
 **`validateEnv()` never throws** — it returns `{ ok, errors, warnings }`. The two **hard errors in
@@ -500,8 +500,8 @@ warnings and the server boots.
 
 `POST /forgot-password` → always `200` (no enumeration); if the account exists, a 32-byte token is
 minted, **hashed + stored** with a 30-min expiry, and a `PASSWORD_RESET` notification with a
-`resetLink` (`APP_BASE_URL/#/reset-password?email=…&token=…` — the hash fragment is appended in
-code for the HashRouter client) is emitted. `POST /reset-password`
+`resetLink` (`APP_BASE_URL/reset-password?email=…&token=…` — the clean BrowserRouter path is appended
+in code; old HashRouter `/#/…` links still resolve via the client's compatibility shim) is emitted. `POST /reset-password`
 consumes the single-use token, enforces the policy, sets the new hash, **bumps `tokenVersion` and
 revokes all sessions** (so every device is signed out). Email verification works the same way via
 `EMAIL_VERIFICATION` / `verificationLink`.

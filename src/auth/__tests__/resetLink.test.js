@@ -4,12 +4,12 @@ import assert from "node:assert/strict";
 import { appLink } from "../core/AuthService.js";
 import { config, normalizeAppBaseUrl } from "../config/auth.config.js";
 
-// Regression tests for the emailed-link builder. The original bug: APP_BASE_URL
-// was documented as needing a trailing "/#" for the client's HashRouter, but
-// dotenv truncates unquoted values at "#" (inline-comment rule), so links were
-// emitted WITHOUT the hash (https://site//reset-password?…) and the SPA served
-// the homepage instead of the reset page. The hash fragment is now appended in
-// code and the env value is normalized to a bare origin.
+// Regression tests for the emailed-link builder. The client migrated from
+// HashRouter to BrowserRouter, so emitted links are now clean paths
+// (https://site/reset-password?…) with no "#" fragment. APP_BASE_URL is still
+// normalized to a bare origin because dotenv truncates unquoted values at "#"
+// (inline-comment rule); the route path is always appended in code. Old
+// HashRouter links still resolve via the client's compatibility shim.
 
 test("normalizeAppBaseUrl strips every trailing '/', '#', '/#' variant", () => {
   const want = "https://roadcruise-client.vercel.app";
@@ -27,20 +27,21 @@ test("config.appBaseUrl is a bare origin (no trailing '/' or '#')", () => {
   assert.ok(!/[/#]$/.test(config.appBaseUrl), `got ${config.appBaseUrl}`);
 });
 
-test("appLink builds a HashRouter URL with encoded query params", () => {
+test("appLink builds a BrowserRouter clean-path URL with encoded query params", () => {
   const link = appLink("/reset-password", { email: "user+tag@example.com", token: "abc123DEF" });
   assert.equal(
     link,
-    `${config.appBaseUrl}/#/reset-password?email=user%2Btag%40example.com&token=abc123DEF`
+    `${config.appBaseUrl}/reset-password?email=user%2Btag%40example.com&token=abc123DEF`
   );
 });
 
-test("appLink never emits the broken hash-less shape", () => {
+test("appLink emits a clean path with no '#' fragment or double slash", () => {
   const link = appLink("/reset-password", { email: "a@b.c", token: "t" });
-  assert.ok(link.includes("/#/reset-password?"), "hash fragment present");
-  assert.ok(!link.includes("//reset-password"), "no hash-less double-slash path");
+  assert.ok(link.includes("/reset-password?"), "clean route path present");
+  assert.ok(!link.includes("#"), "no hash fragment");
+  assert.ok(!link.includes("//reset-password"), "no double-slash path");
 });
 
 test("appLink without params emits no query string", () => {
-  assert.equal(appLink("/reset-password"), `${config.appBaseUrl}/#/reset-password`);
+  assert.equal(appLink("/reset-password"), `${config.appBaseUrl}/reset-password`);
 });

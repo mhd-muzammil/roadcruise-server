@@ -41,18 +41,19 @@ import { notifyCustomerRegistered } from "../../notifications/integration/hooks.
 const authErr = (message, code, status = 400) => Object.assign(new Error(message), { code, status });
 
 /**
- * Build an absolute FRONTEND link for emailed flows. The client is a HashRouter
- * SPA, so routes live in the URL fragment:
- *   <appBaseUrl>/#/reset-password?email=…&token=…
- * The "#" is added here rather than in APP_BASE_URL because dotenv truncates
- * unquoted env values at "#" (inline-comment rule) — embedding it in the env
- * var silently produced hash-less links that landed on the homepage.
+ * Build an absolute FRONTEND link for emailed flows. The client is now a
+ * BrowserRouter SPA, so routes are clean paths (no "#" fragment):
+ *   <appBaseUrl>/reset-password?email=…&token=…
+ * Old HashRouter links (<appBaseUrl>/#/reset-password?…) still resolve via the
+ * client's compatibility shim, so previously emailed links keep working.
+ * APP_BASE_URL stays a bare origin (no "#"): dotenv truncates unquoted env
+ * values at "#" (inline-comment rule), so the path is always built here.
  */
 export const appLink = (path, params = {}) => {
   const query = Object.entries(params)
     .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
     .join("&");
-  return `${config.appBaseUrl}/#${path}${query ? `?${query}` : ""}`;
+  return `${config.appBaseUrl}${path}${query ? `?${query}` : ""}`;
 };
 
 /**

@@ -13,10 +13,11 @@ const int = (v, def) => {
 
 /**
  * Normalize APP_BASE_URL to a bare origin: trim whitespace and strip any
- * trailing "/" or "#". Older configs appended "/#" for the client's HashRouter,
- * but dotenv treats an unquoted "#" as an inline comment and silently drops it
- * (turning "https://site/#" into "https://site/"), which broke every emailed
- * link. The hash segment is now appended in code — see appLink() in AuthService.
+ * trailing "/" or "#". The client is a BrowserRouter SPA, so emailed links are
+ * clean paths built in code (see appLink() in AuthService); APP_BASE_URL must
+ * stay a bare origin. dotenv treats an unquoted "#" as an inline comment and
+ * silently drops it, so a "#" must never appear in the env value — stripping any
+ * stray trailing "/" or "#" here keeps legacy HashRouter-style values safe too.
  */
 export const normalizeAppBaseUrl = (raw) =>
   String(raw || "http://localhost:5173").trim().replace(/[/#]+$/, "");
