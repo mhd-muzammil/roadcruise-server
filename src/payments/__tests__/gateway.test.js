@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { MockGateway } from "../gateways/MockGateway.js";
+import { RazorpayGateway } from "../gateways/RazorpayGateway.js";
 import { toMinor, fromMinor } from "../gateways/Gateway.js";
 import { WebhookEvents } from "../config/paymentEvents.js";
 
@@ -64,6 +65,28 @@ test("buildWebhook + verifyWebhook round-trip", () => {
   assert.equal(gw.verifyWebhook(body + "x", signature), false);
   const parsed = JSON.parse(body);
   assert.equal(parsed.event, WebhookEvents.PAYMENT_CAPTURED);
+});
+
+test("RazorpayGateway surfaces SDK plain-object rejections as real Errors", async () => {
+  const rzp = new RazorpayGateway();
+  // The razorpay SDK rejects with { statusCode, error } (not an Error); inject a
+  // fake client so no network/credentials are needed.
+  rzp._client = {
+    orders: {
+      create: () =>
+        Promise.reject({ statusCode: 401, error: { code: "BAD_REQUEST_ERROR", description: "Authentication failed" } }),
+    },
+  };
+  await assert.rejects(
+    () => rzp.createOrder({ amount: 100, currency: "INR", receipt: "r", notes: {} }),
+    (e) => {
+      assert.ok(e instanceof Error);
+      assert.equal(e.message, "Authentication failed");
+      assert.equal(e.code, "BAD_REQUEST_ERROR");
+      assert.equal(e.statusCode, 401);
+      return true;
+    }
+  );
 });
 
 test("toMinor / fromMinor convert rupees <-> paise", () => {

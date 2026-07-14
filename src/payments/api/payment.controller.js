@@ -45,7 +45,8 @@ export const createOrder = async (req, res) => {
     res.status(201).json(result);
   } catch (e) {
     const status = e.code === "BOOKING_NOT_FOUND" ? 404 : 400;
-    res.status(status).json({ error: e.message });
+    // e.message can be empty for non-Error rejections — never send back `{}`.
+    res.status(status).json({ error: e.message || "Could not create the payment order" });
   }
 };
 

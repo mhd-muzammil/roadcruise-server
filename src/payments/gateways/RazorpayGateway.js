@@ -8,6 +8,23 @@ import { verifyCheckoutSignature, verifyWebhookSignature } from "../core/signatu
  * Signature verification reuses the shared timing-safe HMAC utils (the same math
  * Razorpay documents), so verification does not depend on the SDK.
  */
+
+// The razorpay SDK rejects API failures with a PLAIN OBJECT
+// ({ statusCode, error: { code, description } }), not an Error — so e.message
+// is undefined and callers that do `res.json({ error: e.message })` emit an
+// empty body, hiding the real cause (e.g. 401 "Authentication failed" on a bad
+// key secret). Normalize every SDK rejection into a real Error here.
+const asError = (e) => {
+  if (e instanceof Error) return e;
+  const err = new Error(
+    e?.error?.description || e?.message || `Razorpay request failed (HTTP ${e?.statusCode ?? "unknown"})`
+  );
+  err.code = e?.error?.code || "GATEWAY_ERROR";
+  err.statusCode = e?.statusCode;
+  err.raw = e;
+  return err;
+};
+
 export class RazorpayGateway extends PaymentGateway {
   constructor() {
     super();
@@ -34,8 +51,12 @@ export class RazorpayGateway extends PaymentGateway {
 
   async createOrder({ amount, currency, receipt, notes }) {
     const client = await this._c();
-    const order = await client.orders.create({ amount, currency, receipt, notes, payment_capture: 1 });
-    return { orderId: order.id, amount: order.amount, currency: order.currency, status: order.status, raw: order };
+    try {
+      const order = await client.orders.create({ amount, currency, receipt, notes, payment_capture: 1 });
+      return { orderId: order.id, amount: order.amount, currency: order.currency, status: order.status, raw: order };
+    } catch (e) {
+      throw asError(e);
+    }
   }
 
   verifyPayment({ orderId, paymentId, signature }) {
@@ -44,19 +65,31 @@ export class RazorpayGateway extends PaymentGateway {
 
   async capturePayment({ paymentId, amount, currency }) {
     const client = await this._c();
-    const res = await client.payments.capture(paymentId, amount, currency);
-    return { status: res.status, raw: res };
+    try {
+      const res = await client.payments.capture(paymentId, amount, currency);
+      return { status: res.status, raw: res };
+    } catch (e) {
+      throw asError(e);
+    }
   }
 
   async fetchPayment(paymentId) {
     const client = await this._c();
-    return client.payments.fetch(paymentId);
+    try {
+      return await client.payments.fetch(paymentId);
+    } catch (e) {
+      throw asError(e);
+    }
   }
 
   async refund({ paymentId, amount, notes }) {
     const client = await this._c();
-    const res = await client.payments.refund(paymentId, { amount, notes });
-    return { refundId: res.id, status: res.status, amount: res.amount, raw: res };
+    try {
+      const res = await client.payments.refund(paymentId, { amount, notes });
+      return { refundId: res.id, status: res.status, amount: res.amount, raw: res };
+    } catch (e) {
+      throw asError(e);
+    }
   }
 
   verifyWebhook(rawBody, signature) {
