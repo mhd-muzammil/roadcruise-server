@@ -89,6 +89,41 @@ test("RazorpayGateway surfaces SDK plain-object rejections as real Errors", asyn
   );
 });
 
+test("RazorpayGateway.capturePayment treats 'already captured' as success (auto-capture)", async () => {
+  const rzp = new RazorpayGateway();
+  // payment_capture:1 means Razorpay already captured at pay time; a 2nd capture
+  // is rejected. The gateway must read back the payment and report it captured,
+  // NOT throw (else the booking never confirms and no notifications are sent).
+  let fetchCalled = false;
+  rzp._client = {
+    payments: {
+      capture: () =>
+        Promise.reject({
+          statusCode: 400,
+          error: { code: "BAD_REQUEST_ERROR", description: "This payment has already been captured" },
+        }),
+      fetch: () => {
+        fetchCalled = true;
+        return Promise.resolve({ id: "pay_x", status: "captured", amount: 100 });
+      },
+    },
+  };
+  const res = await rzp.capturePayment({ paymentId: "pay_x", amount: 100, currency: "INR" });
+  assert.equal(res.status, "captured");
+  assert.equal(fetchCalled, true);
+});
+
+test("RazorpayGateway.capturePayment still throws on a genuine capture failure", async () => {
+  const rzp = new RazorpayGateway();
+  rzp._client = {
+    payments: {
+      capture: () =>
+        Promise.reject({ statusCode: 400, error: { code: "BAD_REQUEST_ERROR", description: "The amount is invalid" } }),
+    },
+  };
+  await assert.rejects(() => rzp.capturePayment({ paymentId: "pay_y", amount: 100, currency: "INR" }), /amount is invalid/i);
+});
+
 test("toMinor / fromMinor convert rupees <-> paise", () => {
   assert.equal(toMinor(2400), 240000);
   assert.equal(toMinor(99.99), 9999);

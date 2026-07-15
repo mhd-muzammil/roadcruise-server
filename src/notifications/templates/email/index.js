@@ -66,16 +66,19 @@ export const emailTemplates = {
       title: "Your Booking is Confirmed",
       preheader: "All set! Your trip is confirmed.",
       content: `
-        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, your booking is confirmed. We look forward to serving you.</p>
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, your payment has been received and your booking is <strong>confirmed</strong>. Your trip details are below.</p>
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Vehicle", "{{vehicle}}") +
             detailRow("Pickup", "{{pickup}}") +
             detailRow("Drop", "{{drop}}") +
             detailRow("Trip Dates", "{{tripDate}}") +
+            detailRow("Trip Type", "{{tripType}}") +
             detailRow("Driver", "{{driver}}") +
-            detailRow("Fare", "₹{{paymentAmount}}")
-        )}`,
+            detailRow("Amount Paid", "₹{{paymentAmount}}")
+        )}
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Our team at {{companyName}} will contact you <strong>as soon as possible</strong> to finalize your pickup and driver details.</p>
+        <p style="font-size:13px;color:#71717a;">For anything urgent, call us at {{supportPhone}} or email {{supportEmail}}.</p>`,
     }),
   },
 

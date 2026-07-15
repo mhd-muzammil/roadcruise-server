@@ -108,8 +108,10 @@ const base = (channels = ALL, overrides = {}) => ({
  */
 export const workflows = {
   [NotificationEvents.BOOKING_CREATED]: base(),
-  // Confirmation-after-payment message -> customer SMS + WhatsApp.
-  [NotificationEvents.BOOKING_CONFIRMED]: base([Channels.SMS, Channels.WHATSAPP]),
+  // Confirmation-after-payment message -> customer Email + SMS + WhatsApp, so the
+  // customer always gets the full trip-details confirmation by email even when
+  // SMS/WhatsApp providers are in mock mode.
+  [NotificationEvents.BOOKING_CONFIRMED]: base([Channels.EMAIL, Channels.SMS, Channels.WHATSAPP]),
   [NotificationEvents.BOOKING_CANCELLED]: base(),
   [NotificationEvents.BOOKING_RESCHEDULED]: base(),
 

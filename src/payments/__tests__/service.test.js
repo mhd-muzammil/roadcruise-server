@@ -6,6 +6,7 @@ import { PaymentRepository } from "../repository/PaymentRepository.js";
 import { MockGateway } from "../gateways/MockGateway.js";
 import { PaymentStatus, WebhookEvents } from "../config/paymentEvents.js";
 import { useTempDb, seedBooking } from "../../db/testSupport.js";
+import { getBookingById } from "../../utils/db.js";
 
 // PaymentService.verifyAndCapture / handleWebhook -> _markPaid -> confirmBooking
 // writes booking state. Bookings live in an isolated, empty temp SQLite DB per
@@ -66,6 +67,25 @@ test("happy path: createOrderForBooking -> simulateCheckout -> verifyAndCapture 
   });
   assert.equal(again.alreadyPaid, true);
   assert.equal(again.payment.status, PaymentStatus.PAID);
+});
+
+test("a verified payment CONFIRMS the booking (status -> Approved)", async () => {
+  // Directly guards the reported bug: after a successful payment the booking must
+  // transition to the confirmed state (so the UI shows "Confirmed" and the paid
+  // notifications fire), not stay Pending.
+  const svc = makeService();
+  const bookingId = addBooking(1000);
+  assert.equal(getBookingById(bookingId).status, "Pending");
+
+  const { payment } = await svc.createOrderForBooking({ bookingId, amount: 1000 });
+  const sim = svc.gateway.simulateCheckout(payment.gatewayOrderId);
+  await svc.verifyAndCapture({
+    orderId: sim.razorpay_order_id,
+    paymentId: sim.razorpay_payment_id,
+    signature: sim.razorpay_signature,
+  });
+
+  assert.equal(getBookingById(bookingId).status, "Approved");
 });
 
 test("invalid signature throws INVALID_SIGNATURE and marks the payment FAILED", async () => {

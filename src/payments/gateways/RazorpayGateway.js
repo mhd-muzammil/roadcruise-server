@@ -69,7 +69,19 @@ export class RazorpayGateway extends PaymentGateway {
       const res = await client.payments.capture(paymentId, amount, currency);
       return { status: res.status, raw: res };
     } catch (e) {
-      throw asError(e);
+      const err = asError(e);
+      // Orders are created with payment_capture:1 (AUTO-capture), so by the time
+      // we verify the browser checkout signature Razorpay has ALREADY captured the
+      // payment. A second capture is then rejected with "already been captured".
+      // That is NOT a failure — it means the money is collected. Read back the
+      // authoritative payment status so the confirmation flow (mark PAID -> confirm
+      // booking -> send email/WhatsApp) still completes instead of throwing.
+      const desc = (err.raw?.error?.description || err.message || "").toLowerCase();
+      if (desc.includes("already been captured") || desc.includes("already captured")) {
+        const p = await this.fetchPayment(paymentId).catch(() => null);
+        return { status: p?.status || "captured", raw: p || { captured: true } };
+      }
+      throw err;
     }
   }
 
