@@ -12,7 +12,7 @@ import { config, normalizeAppBaseUrl } from "../config/auth.config.js";
 // HashRouter links still resolve via the client's compatibility shim.
 
 test("normalizeAppBaseUrl strips every trailing '/', '#', '/#' variant", () => {
-  const want = "https://roadcruise-client.vercel.app";
+  const want = "https://roadcruise.in";
   for (const raw of [want, `${want}/`, `${want}/#`, `${want}/#/`, `${want}//`, ` ${want}/# `]) {
     assert.equal(normalizeAppBaseUrl(raw), want, `raw=${JSON.stringify(raw)}`);
   }
