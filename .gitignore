@@ -37,8 +37,11 @@ coverage
 prisma/dev.db
 prisma/dev.db-journal
 
-# Uploads
-uploads/
+# Uploads — runtime media storage only. Anchored to the repo root and to
+# src/config so it never swallows the src/uploads/ SOURCE module (the multer
+# middleware), which MUST be committed.
+/uploads/
+src/config/uploads/
 
 # Cache
 .cache

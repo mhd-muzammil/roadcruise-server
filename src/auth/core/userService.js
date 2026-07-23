@@ -237,6 +237,26 @@ export function setRole(email, role, actor = "admin") {
   return mutateUser(email, (u) => ({ ...u, role, roleChangedBy: actor, roleChangedAt: new Date().toISOString() }));
 }
 
+/** True if this email is configured (via ADMIN_EMAILS/ADMIN_EMAIL) to be an admin. */
+export function isConfiguredAdmin(email) {
+  return config.adminEmails.includes(norm(email));
+}
+
+/**
+ * Promote a user to the admin role when their email is in the configured admin
+ * list — the secure, server-side replacement for the removed client "bypass".
+ * Idempotent: only writes when the role actually needs to change. Returns the
+ * (possibly updated) user, or the original when no change is needed.
+ */
+export function elevateIfAdmin(email) {
+  const user = findByEmail(email);
+  if (!user) return user;
+  if (isConfiguredAdmin(email) && user.role !== "admin") {
+    return setRole(email, "admin", "system:env") || user;
+  }
+  return user;
+}
+
 // ---- reset tokens (stored HASHED, single-use, expiring) ----
 export function setResetToken(email, token) {
   const expiry = new Date(Date.now() + config.resetTokenTtlSec * 1000).toISOString();
@@ -286,5 +306,6 @@ export default {
   sanitize, findByEmail, findByGoogleId, createFromGoogle, linkGoogle, touchLastLogin, migrateLegacyUsers,
   hashToken, storedCredential, needsPasswordMigration, createLocalUser, setPasswordHash, isLocked,
   recordFailedLogin, resetFailedLogins, unlockAccount, bumpTokenVersion, setEmailVerified, setRole,
+  isConfiguredAdmin, elevateIfAdmin,
   setResetToken, consumeResetToken, setVerificationToken, consumeVerificationToken,
 };

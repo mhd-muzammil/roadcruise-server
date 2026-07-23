@@ -16,6 +16,7 @@ import {
 import { roleAtLeast, Roles } from "../auth/rbac/roles.js";
 import { getPaymentService } from "../payments/index.js";
 import { config as paymentConfig } from "../payments/config/payment.config.js";
+import { isVehicleAvailable } from "../services/availability.js";
 
 // Customer-facing booking reference in the RDZ### shape (RDZ001, RDZ002, …).
 // Sequential: continue from the highest existing RDZ number so references never
@@ -53,7 +54,7 @@ export const createBooking = async (req, res) => {
   const {
     fromDate, toDate, tripType, item, fare, paymentMethod, paymentMode, phone, name,
     // Context-specific details from the vehicle / package / general forms.
-    category, pickup, drop, vehicle, packageName, passengers, pickupTime, notes,
+    category, pickup, drop, vehicle, vehicleId, packageName, passengers, pickupTime, notes,
   } = req.body || {};
 
   if (!fromDate || !toDate || !item) {
@@ -64,6 +65,12 @@ export const createBooking = async (req, res) => {
   const amount = Number(fare);
   if (!Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: "A valid fare is required" });
+  }
+  // Vehicle availability (manual-free inventory): a concrete fleet vehicle can be
+  // booked only while a unit is free. "No preference"/package bookings send no
+  // vehicleId and are never blocked. Held units are freed by an admin.
+  if (vehicleId && !isVehicleAvailable(vehicleId)) {
+    return res.status(409).json({ error: "This vehicle is already booked — please choose another." });
   }
 
   const paymentsEnabled = paymentConfig.enabled;
@@ -91,6 +98,11 @@ export const createBooking = async (req, res) => {
     pickup: pickup || "",
     drop: drop || "",
     vehicle: vehicle || "",
+    // Concrete fleet vehicle this booking holds a unit of (null for
+    // package/"no preference"). `vehicleReleased` is flipped true when an admin
+    // frees the unit after the trip — see services/availability.js.
+    vehicleId: vehicleId || null,
+    vehicleReleased: false,
     packageName: packageName || "",
     passengers: passengers || "",
     pickupTime: pickupTime || "",

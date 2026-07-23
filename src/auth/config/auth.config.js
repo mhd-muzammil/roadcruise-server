@@ -50,6 +50,16 @@ export const config = {
   isProduction: process.env.NODE_ENV === "production",
   defaultPhone: process.env.DEFAULT_USER_PHONE || "+91 99999 99999",
 
+  // Emails that are granted the ADMIN role server-side on login/register. This
+  // replaces the old insecure client-side "bypass"/email check: admin access is
+  // now decided by the trusted server from ADMIN_EMAILS (csv) + ADMIN_EMAIL.
+  adminEmails: [
+    ...String(process.env.ADMIN_EMAILS || "").split(","),
+    process.env.ADMIN_EMAIL || "",
+  ]
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+
   // ---- Feature flags (enterprise hardening) ----
   flags: {
     auth: bool(process.env.AUTH_ENABLED, true),

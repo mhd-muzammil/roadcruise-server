@@ -15,6 +15,7 @@ import {
   storedCredential,
   needsPasswordMigration,
   setPasswordHash,
+  elevateIfAdmin,
   isLocked,
   recordFailedLogin,
   resetFailedLogins,
@@ -98,6 +99,9 @@ export class AuthService {
       // Returning Google user.
       user = touchLastLogin(user.email) || user;
     }
+
+    // Grant admin to configured admin emails (server-side; replaces client bypass).
+    user = elevateIfAdmin(user.email) || user;
 
     // 3) Issue tokens + create a session (same machinery as local login).
     const { accessToken, refreshToken, session } = await this._issueSession(user, {
@@ -184,6 +188,7 @@ export class AuthService {
       await audit({ action: AuditActions.PASSWORD_MIGRATED, email: user.email, ip, userAgent, result: "ok" });
     }
     touchLastLogin(user.email);
+    elevateIfAdmin(user.email); // grant admin role to configured admin emails
     const fresh = findByEmail(user.email);
     const { accessToken, refreshToken, session } = await this._issueSession(fresh, { provider: "local", ip, userAgent });
     await audit({ action: AuditActions.LOGIN_SUCCESS, email: fresh.email, ip, userAgent, result: "ok", detail: { sid: session.sessionId } });
@@ -198,7 +203,8 @@ export class AuthService {
     if (findByEmail(email)) throw authErr("User with this email already exists", "EMAIL_EXISTS", 409);
 
     const hash = await hashPassword(password);
-    const user = createLocalUser({ name, email, phone, passwordHash: hash, algo: config.passwordAlgo });
+    const created = createLocalUser({ name, email, phone, passwordHash: hash, algo: config.passwordAlgo });
+    const user = elevateIfAdmin(created.email) || created; // configured admin emails register as admin
 
     notifyCustomerRegistered(sanitize(user));
     if (config.flags.emailVerification) await this._sendVerification(user);

@@ -4,6 +4,9 @@ import authRoutes from "./routes/auth.routes.js";
 import bookingRoutes from "./routes/booking.routes.js";
 import contactRoutes from "./routes/contact.routes.js";
 import reviewRoutes from "./routes/review.routes.js";
+import vehicleRoutes from "./routes/vehicle.routes.js";
+import galleryRoutes from "./routes/gallery.routes.js";
+import { UPLOAD_DIR, UPLOAD_ROUTE } from "./uploads/index.js";
 import notifications from "./notifications/index.js";
 import payments from "./payments/index.js";
 import authOAuth from "./auth/index.js";
@@ -27,6 +30,12 @@ app.use("/api/auth", authRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/vehicles", vehicleRoutes);
+app.use("/api/gallery", galleryRoutes);
+
+// Serve admin-uploaded media (vehicle photos/videos + gallery). Read-only static
+// mount; files live on durable storage under DATA_DIR/uploads (see uploads/index.js).
+app.use(UPLOAD_ROUTE, express.static(UPLOAD_DIR, { maxAge: "7d", fallthrough: false }));
 
 // Google OAuth 2.0 (additive, non-breaking): mounts extra /api/auth/* routes
 // (/google, /nonce, /google/config) alongside the existing login/register.
