@@ -12,6 +12,7 @@ import {
   notifyBookingCancelled,
   notifyDriverAssigned,
   notifyAdminBookingUnpaid,
+  notifyAdminBookingCancelled,
 } from "../notifications/integration/hooks.js";
 import { roleAtLeast, Roles } from "../auth/rbac/roles.js";
 import { getPaymentService } from "../payments/index.js";
@@ -168,12 +169,49 @@ export const updateBooking = (req, res) => {
 
   if (status !== undefined && status !== existing.status) {
     if (status === "Approved") notifyBookingConfirmed(updated);
-    else if (status === "Cancelled") notifyBookingCancelled(updated);
+    else if (status === "Cancelled") {
+      notifyBookingCancelled(updated);      // customer: "your booking is cancelled"
+      notifyAdminBookingCancelled(updated); // business inbox: free the vehicle / refund
+    }
   }
   if (driver !== undefined && driver !== existing.driver && driver !== "None") {
     notifyDriverAssigned(updated);
   }
 
+  res.json(updated);
+};
+
+/**
+ * PATCH /api/bookings/:id/cancel
+ * Self-service cancellation. A customer may cancel THEIR OWN booking; staff/admins
+ * may cancel any booking. Cancelling flips the status to "Cancelled", which also
+ * frees the held vehicle unit automatically (availability skips Cancelled bookings
+ * — see services/availability.js), and emails the customer. Idempotent: cancelling
+ * an already-cancelled booking just returns it without sending a second email.
+ */
+export const cancelBooking = (req, res) => {
+  const { id } = req.params;
+  const { role, email } = req.auth;
+
+  const existing = getBookingById(id);
+  if (!existing) return res.status(404).json({ error: "Booking not found" });
+
+  // Ownership: a customer can only cancel their own booking; staff+ can cancel any.
+  const isOwner = existing.customerEmail === email;
+  if (!isOwner && !roleAtLeast(role, Roles.STAFF)) {
+    return res.status(403).json({ error: "You can only cancel your own bookings" });
+  }
+
+  // Already cancelled -> idempotent no-op so a double-click never emails twice.
+  if (existing.status === "Cancelled") return res.json(existing);
+  // A finished trip can't be cancelled.
+  if (existing.status === "Completed") {
+    return res.status(409).json({ error: "A completed booking cannot be cancelled" });
+  }
+
+  const { booking: updated } = patchBooking(id, { status: "Cancelled" });
+  notifyBookingCancelled(updated);      // customer: "your booking is cancelled"
+  notifyAdminBookingCancelled(updated); // business inbox: free the vehicle / refund
   res.json(updated);
 };
 

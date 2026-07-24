@@ -405,6 +405,29 @@ export const emailTemplates = {
     }),
   }),
 
+  [NotificationEvents.ADMIN_BOOKING_CANCELLED]: (ctx) => ({
+    subject: "❌ Booking CANCELLED {{bookingId}} — {{customerName}}",
+    html: emailLayout({
+      title: "Booking Cancelled",
+      preheader: "A booking has been cancelled — free the vehicle / handle any refund.",
+      content: `
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">A booking has been <strong>cancelled</strong>. The held vehicle unit is now free again. If any payment was collected, process the refund separately.</p>
+        ${detailTable(
+          detailRow("Booking ID", "{{bookingId}}") +
+            detailRow("Customer", "{{customerName}}") +
+            detailRow("Phone", "{{customerPhone}}") +
+            row(has(ctx.packageName), "Package", "{{packageName}}") +
+            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
+            detailRow("Trip Dates", "{{tripDate}}") +
+            detailRow("Trip Type", "{{tripType}}") +
+            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
+            row(has(ctx.drop), "Drop", "{{drop}}") +
+            detailRow("Fare", "₹{{paymentAmount}}")
+        )}
+        <p style="font-size:13px;color:#71717a;">☎️ Reach the customer at {{customerPhone}} if you need to follow up.</p>`,
+    }),
+  }),
+
   [NotificationEvents.ADMIN_BOOKING_PAID]: (ctx) => ({
     subject: "💰 New PAID booking {{bookingId}} — trip confirmed",
     html: emailLayout({

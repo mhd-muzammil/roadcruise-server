@@ -139,6 +139,7 @@ export const workflows = {
   // Internal admin alerts -> the business's own inbox (Email) + WhatsApp.
   [NotificationEvents.ADMIN_BOOKING_PAID]: base([Channels.EMAIL, Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
   [NotificationEvents.ADMIN_BOOKING_UNPAID]: base([Channels.EMAIL, Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
+  [NotificationEvents.ADMIN_BOOKING_CANCELLED]: base([Channels.EMAIL, Channels.WHATSAPP], { resolveRecipients: adminRecipients }),
 
   // Contact-form enquiry -> business inbox (Email). Acknowledgement -> the
   // person who wrote in (Email). Both use the contact context builder.

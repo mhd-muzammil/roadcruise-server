@@ -49,6 +49,9 @@ export const NotificationEvents = Object.freeze({
   // online; UNPAID = customer must be contacted to collect payment manually.
   ADMIN_BOOKING_PAID: "admin.booking_paid",
   ADMIN_BOOKING_UNPAID: "admin.booking_unpaid",
+  // A booking was cancelled (by the customer from "My Bookings", or by an admin).
+  // Alerts the business inbox so staff can free the vehicle / handle any refund.
+  ADMIN_BOOKING_CANCELLED: "admin.booking_cancelled",
 });
 
 /** Delivery channels supported by the engine. */

@@ -66,6 +66,16 @@ export function notifyAdminBookingUnpaid(booking, meta = {}) {
   return notify(NotificationEvents.ADMIN_BOOKING_UNPAID, { ...booking }, meta);
 }
 
+/**
+ * ADMIN alert: a booking was cancelled (by the customer or an admin). Goes to
+ * the business inbox + WhatsApp so staff know the vehicle is free again and can
+ * handle any refund. Paired with notifyBookingCancelled (which tells the
+ * CUSTOMER); the two together cover both parties on every cancellation.
+ */
+export function notifyAdminBookingCancelled(booking, meta = {}) {
+  return notify(NotificationEvents.ADMIN_BOOKING_CANCELLED, { ...booking }, meta);
+}
+
 export default {
   notifyBookingCreated,
   notifyBookingConfirmed,
@@ -74,4 +84,5 @@ export default {
   notifyBookingCancelled,
   notifyCustomerRegistered,
   notifyAdminBookingUnpaid,
+  notifyAdminBookingCancelled,
 };

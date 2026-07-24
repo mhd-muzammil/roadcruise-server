@@ -141,6 +141,14 @@ export const whatsappTemplates = {
         `*{{companyName}}* — 🆕 NEW BOOKING (UNPAID)\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\n☎️ Please contact the customer to confirm and collect payment.`,
     };
   },
+  [NotificationEvents.ADMIN_BOOKING_CANCELLED]: (ctx) => {
+    const pkg = ctx.packageName ? `\n📦 ${ctx.packageName}` : "";
+    const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
+    return {
+      text:
+        `*{{companyName}}* — ❌ BOOKING CANCELLED\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\nThe vehicle unit is free again. Process any refund separately.`,
+    };
+  },
   generic: {
     text: "*{{companyName}}*\nUpdate on {{bookingId}}. Contact {{supportPhone}} for details.",
   },
