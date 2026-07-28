@@ -7,46 +7,20 @@
 // real columns instead of the JSON `data` column used by users/bookings.
 import { getDb } from "./sqlite.js";
 
-// The four long-standing testimonials previously hard-coded on the homepage.
-// Seeded once, only when the table is empty, so the Reviews section is never
-// blank on a fresh install. Seed avatars are kept; new submissions have none
-// (the client renders an initial-letter avatar instead).
-const SEED_REVIEWS = [
-  {
-    name: "Arvind Kumar",
-    role: "Corporate Executive",
-    rating: 5,
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120",
-    text: "The Mercedes E-Class was impeccable. The driver was extremely professional, knew the routes perfectly, and made our executive business tour in Chennai completely hassle-free.",
-    created_at: "2026-03-14T10:20:00.000Z",
-  },
-  {
-    name: "Priya Menon",
-    role: "Family Traveller",
-    rating: 5,
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=120",
-    text: "Booked Kodaikanal package for family. Transparent pricing, excellent hotels, and hassle-free transit. The booking process was very smooth and transparent.",
-    created_at: "2026-04-02T08:05:00.000Z",
-  },
-  {
-    name: "Rakesh Iyer",
-    role: "Regular Tourist",
-    rating: 5,
-    avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=120",
-    text: "Extremely clean Innova Crysta. Very neat driver with proper uniform and tracking setup. Road Cruise definitely makes every journey feel like a true cruise.",
-    created_at: "2026-05-11T16:45:00.000Z",
-  },
-  {
-    name: "Divya Shankar",
-    role: "Business Owner",
-    rating: 5,
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120",
-    text: "Amazing support desk. We needed to extend our Ooty tour by a day at midnight, and it was handled in minutes. The customer support is top-notch.",
-    created_at: "2026-06-07T12:30:00.000Z",
-  },
+// The four placeholder testimonials this table used to seed on first run.
+// Seeding was removed (only genuine customer submissions are shown now), but
+// databases that already ran the old seed still hold these rows — ensure()
+// deletes them by their exact hard-coded (name, created_at) pairs, which no
+// real submission can collide with (real created_at values carry live
+// millisecond timestamps from new Date().toISOString()).
+const LEGACY_SEED_KEYS = [
+  ["Arvind Kumar", "2026-03-14T10:20:00.000Z"],
+  ["Priya Menon", "2026-04-02T08:05:00.000Z"],
+  ["Rakesh Iyer", "2026-05-11T16:45:00.000Z"],
+  ["Divya Shankar", "2026-06-07T12:30:00.000Z"],
 ];
 
-/** Open the DB, make sure the reviews table exists, and seed it when empty. */
+/** Open the DB, make sure the reviews table exists, and purge legacy seeds. */
 function ensure() {
   const db = getDb();
   db.exec(`
@@ -63,16 +37,8 @@ function ensure() {
     CREATE INDEX IF NOT EXISTS idx_reviews_approved ON reviews(approved, id);
   `);
 
-  const { n } = db.prepare("SELECT COUNT(*) AS n FROM reviews").get();
-  if (n === 0) {
-    const ins = db.prepare(
-      `INSERT INTO reviews (name, role, rating, text, avatar, approved, created_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?)`
-    );
-    for (const r of SEED_REVIEWS) {
-      ins.run(r.name, r.role, r.rating, r.text, r.avatar, r.created_at);
-    }
-  }
+  const purge = db.prepare("DELETE FROM reviews WHERE name = ? AND created_at = ?");
+  for (const [name, createdAt] of LEGACY_SEED_KEYS) purge.run(name, createdAt);
   return db;
 }
 
