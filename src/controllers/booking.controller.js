@@ -22,6 +22,10 @@ import { isVehicleAvailable } from "../services/availability.js";
 // Customer-facing booking reference in the RDZ### shape (RDZ001, RDZ002, …).
 // Sequential: continue from the highest existing RDZ number so references never
 // collide and read cleanly. Legacy RC-BK-#### ids are ignored by the scan.
+// Share of the fare collected online on the "advance" payment plan (20% now,
+// balance to the driver). Keep in sync with the checkout page's display copy.
+const ADVANCE_RATE = 0.2;
+
 const newBookingId = () => {
   let max = 0;
   for (const b of listBookings()) {
@@ -56,6 +60,9 @@ export const createBooking = async (req, res) => {
     fromDate, toDate, tripType, item, fare, paymentMethod, paymentMode, phone, name,
     // Context-specific details from the vehicle / package / general forms.
     category, pickup, drop, vehicle, vehicleId, packageName, passengers, pickupTime, notes,
+    // Trip-planner extras: paymentPlan "advance" pays a 20% deposit online (the
+    // balance goes to the driver); distance/duration come from the route quote.
+    paymentPlan, distanceKm, durationMin,
   } = req.body || {};
 
   if (!fromDate || !toDate || !item) {
@@ -78,6 +85,17 @@ export const createBooking = async (req, res) => {
   const wantsOnline = (paymentMode || "online") !== "arrival";
   const online = wantsOnline && paymentsEnabled;
 
+  // Advance (partial) payment: the deposit is computed HERE, never taken from
+  // the client, so a tampered request can't shrink what gets charged. The
+  // payment module charges advanceAmount when > 0, else the full fare.
+  const plan = online && paymentPlan === "advance" ? "advance" : "full";
+  const advanceAmount = plan === "advance" ? Math.max(1, Math.round(amount * ADVANCE_RATE)) : 0;
+
+  const posInt = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  };
+
   const booking = {
     id: newBookingId(),
     customerEmail: req.auth.email, // owner — used for access control + "my bookings"
@@ -88,8 +106,17 @@ export const createBooking = async (req, res) => {
     tripType: tripType || "Round-trip",
     item,
     fare: amount,
+    // Deposit plan (0 advanceAmount = pay in full). balance = fare - advance is
+    // collected by the driver; both amounts ride along into notifications.
+    paymentPlan: plan,
+    advanceAmount,
+    // Route estimate captured at booking time (trip-planner flow; null for the
+    // classic modal, which has no distance data).
+    distanceKm: posInt(distanceKm),
+    durationMin: posInt(durationMin),
     status: online ? "PendingPayment" : "Pending",
-    paymentMethod: paymentMethod || (online ? "Online" : "Pay on arrival"),
+    paymentMethod:
+      paymentMethod || (online ? (plan === "advance" ? "Online (20% advance)" : "Online") : "Pay on arrival"),
     driver: "None",
     // Context-specific details (persisted so both customer + admin notifications,
     // including the post-payment ones emitted by the payment module, can show

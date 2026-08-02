@@ -64,9 +64,10 @@ export class PaymentService extends EventEmitter {
     );
     if (active) return { payment: active, checkout: this._publicCheckout(active), reused: true };
 
-    // Authoritative amount: the server-side booking fare ONLY — never a client
-    // value (anti price-tampering, C2).
-    const amt = Number(booking.fare);
+    // Authoritative amount: the server-side booking record ONLY — never a client
+    // value (anti price-tampering, C2). An "advance" plan booking charges the
+    // server-computed deposit; the balance is collected offline by the driver.
+    const amt = Number(booking.advanceAmount) > 0 ? Number(booking.advanceAmount) : Number(booking.fare);
     const order = await this.gateway.createOrder({
       amount: toMinor(amt),
       currency: config.currency,
