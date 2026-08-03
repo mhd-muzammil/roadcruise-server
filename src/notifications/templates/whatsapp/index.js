@@ -149,6 +149,14 @@ export const whatsappTemplates = {
         `*{{companyName}}* — ❌ BOOKING CANCELLED\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\nThe vehicle unit is free again. Process any refund separately.`,
     };
   },
+  [NotificationEvents.ADMIN_BOOKING_MODIFIED]: (ctx) => {
+    const pkg = ctx.packageName ? `\n📦 ${ctx.packageName}` : "";
+    const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
+    return {
+      text:
+        `*{{companyName}}* — ✏️ BOOKING MODIFIED\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 New dates: {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\nThe customer changed their trip — re-check the schedule and driver.`,
+    };
+  },
   generic: {
     text: "*{{companyName}}*\nUpdate on {{bookingId}}. Contact {{supportPhone}} for details.",
   },

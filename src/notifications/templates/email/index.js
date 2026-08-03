@@ -428,6 +428,32 @@ export const emailTemplates = {
     }),
   }),
 
+  [NotificationEvents.ADMIN_BOOKING_MODIFIED]: (ctx) => ({
+    subject: "✏️ Booking MODIFIED {{bookingId}} — {{customerName}}",
+    html: emailLayout({
+      title: "Booking Modified",
+      preheader: "A customer changed their booking — re-check the schedule.",
+      content: `
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">A customer has <strong>modified their booking</strong> from My Bookings. The updated trip details are below — re-check the vehicle schedule and driver assignment.</p>
+        ${detailTable(
+          detailRow("Booking ID", "{{bookingId}}") +
+            detailRow("Customer", "{{customerName}}") +
+            detailRow("Phone", "{{customerPhone}}") +
+            row(has(ctx.packageName), "Package", "{{packageName}}") +
+            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
+            detailRow("New Trip Dates", "{{tripDate}}") +
+            detailRow("Trip Type", "{{tripType}}") +
+            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
+            row(has(ctx.drop), "Drop", "{{drop}}") +
+            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
+            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
+            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}") +
+            detailRow("Fare", "₹{{paymentAmount}}")
+        )}
+        <p style="font-size:13px;color:#71717a;">☎️ Reach the customer at {{customerPhone}} if the new schedule needs discussion.</p>`,
+    }),
+  }),
+
   [NotificationEvents.ADMIN_BOOKING_PAID]: (ctx) => ({
     subject: "💰 New PAID booking {{bookingId}} — trip confirmed",
     html: emailLayout({

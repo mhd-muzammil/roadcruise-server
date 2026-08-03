@@ -52,6 +52,11 @@ export function notifyBookingCancelled(booking, meta = {}) {
   return notify(NotificationEvents.BOOKING_CANCELLED, { ...booking }, meta);
 }
 
+/** Booking rescheduled/modified — tells the CUSTOMER their updated trip details. */
+export function notifyBookingRescheduled(booking, meta = {}) {
+  return notify(NotificationEvents.BOOKING_RESCHEDULED, { ...booking }, meta);
+}
+
 /** New customer registered. */
 export function notifyCustomerRegistered(user, meta = {}) {
   return notify(NotificationEvents.CUSTOMER_REGISTERED, { ...user }, meta);
@@ -76,13 +81,24 @@ export function notifyAdminBookingCancelled(booking, meta = {}) {
   return notify(NotificationEvents.ADMIN_BOOKING_CANCELLED, { ...booking }, meta);
 }
 
+/**
+ * ADMIN alert: a customer modified their booking (dates/pickup/drop/…). Goes to
+ * the business inbox + WhatsApp so staff can re-check the schedule/driver.
+ * Paired with notifyBookingRescheduled (which tells the CUSTOMER).
+ */
+export function notifyAdminBookingModified(booking, meta = {}) {
+  return notify(NotificationEvents.ADMIN_BOOKING_MODIFIED, { ...booking }, meta);
+}
+
 export default {
   notifyBookingCreated,
   notifyBookingConfirmed,
   notifyPaymentSuccessful,
   notifyDriverAssigned,
   notifyBookingCancelled,
+  notifyBookingRescheduled,
   notifyCustomerRegistered,
   notifyAdminBookingUnpaid,
   notifyAdminBookingCancelled,
+  notifyAdminBookingModified,
 };

@@ -52,6 +52,9 @@ export const NotificationEvents = Object.freeze({
   // A booking was cancelled (by the customer from "My Bookings", or by an admin).
   // Alerts the business inbox so staff can free the vehicle / handle any refund.
   ADMIN_BOOKING_CANCELLED: "admin.booking_cancelled",
+  // A customer edited their booking from "My Bookings" (dates/pickup/drop/etc.).
+  // Alerts the business inbox so staff can re-check the schedule and driver.
+  ADMIN_BOOKING_MODIFIED: "admin.booking_modified",
 });
 
 /** Delivery channels supported by the engine. */

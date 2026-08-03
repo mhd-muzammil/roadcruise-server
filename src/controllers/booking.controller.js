@@ -10,9 +10,11 @@ import {
   notifyBookingCreated,
   notifyBookingConfirmed,
   notifyBookingCancelled,
+  notifyBookingRescheduled,
   notifyDriverAssigned,
   notifyAdminBookingUnpaid,
   notifyAdminBookingCancelled,
+  notifyAdminBookingModified,
 } from "../notifications/integration/hooks.js";
 import { roleAtLeast, Roles } from "../auth/rbac/roles.js";
 import { getPaymentService } from "../payments/index.js";
@@ -240,6 +242,64 @@ export const cancelBooking = (req, res) => {
   const { booking: updated } = patchBooking(id, { status: "Cancelled" });
   notifyBookingCancelled(updated);      // customer: "your booking is cancelled"
   notifyAdminBookingCancelled(updated); // business inbox: free the vehicle / refund
+  res.json(updated);
+};
+
+/**
+ * PATCH /api/bookings/:id/modify
+ * Self-service trip modification from "My Bookings". A customer may edit THEIR
+ * OWN booking; staff/admins may edit any. Only trip details are editable —
+ * never the fare, vehicle, payment plan or status (those change what was paid
+ * for). Cancelled/Completed bookings can't be modified. On a real change the
+ * customer gets a "booking rescheduled" notification and the business inbox is
+ * alerted so staff can re-check the schedule.
+ */
+const EDITABLE_FIELDS = ["fromDate", "toDate", "pickup", "drop", "passengers", "pickupTime", "notes"];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export const modifyBooking = (req, res) => {
+  const { id } = req.params;
+  const { role, email } = req.auth;
+
+  const existing = getBookingById(id);
+  if (!existing) return res.status(404).json({ error: "Booking not found" });
+
+  const isOwner = existing.customerEmail === email;
+  if (!isOwner && !roleAtLeast(role, Roles.STAFF)) {
+    return res.status(403).json({ error: "You can only modify your own bookings" });
+  }
+  if (existing.status === "Cancelled") {
+    return res.status(409).json({ error: "A cancelled booking cannot be modified" });
+  }
+  if (existing.status === "Completed") {
+    return res.status(409).json({ error: "A completed booking cannot be modified" });
+  }
+
+  const body = req.body || {};
+  const patch = {};
+  for (const field of EDITABLE_FIELDS) {
+    if (body[field] === undefined) continue;
+    const value = String(body[field]).trim().slice(0, 500);
+    if (value !== String(existing[field] ?? "")) patch[field] = value;
+  }
+
+  if (patch.fromDate !== undefined || patch.toDate !== undefined) {
+    const fromDate = patch.fromDate ?? existing.fromDate;
+    const toDate = patch.toDate ?? existing.toDate;
+    if (!DATE_RE.test(fromDate) || !DATE_RE.test(toDate)) {
+      return res.status(400).json({ error: "Trip dates must be valid dates (YYYY-MM-DD)" });
+    }
+    if (toDate < fromDate) {
+      return res.status(400).json({ error: "The trip end date cannot be before the start date" });
+    }
+  }
+
+  // Nothing actually changed -> idempotent no-op, no notifications.
+  if (Object.keys(patch).length === 0) return res.json(existing);
+
+  const { booking: updated } = patchBooking(id, patch);
+  notifyBookingRescheduled(updated);   // customer: "your booking was updated"
+  notifyAdminBookingModified(updated); // business inbox: re-check the schedule
   res.json(updated);
 };
 
