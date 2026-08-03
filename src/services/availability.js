@@ -1,21 +1,34 @@
-// Vehicle availability (manual-free model), shared by the vehicle + booking
+// Vehicle availability (auto-free model), shared by the vehicle + booking
 // controllers so neither has to import the other.
 //
 // Each vehicle has `totalUnits` (default 1). A booking HOLDS one unit of a
-// vehicle when it references that vehicleId, is not Cancelled, and has not been
-// released (`vehicleReleased`). A unit is freed ONLY when an admin releases the
-// booking's hold. So a vehicle reads "already booked" once every unit is held,
-// until an admin frees one.
+// vehicle when it references that vehicleId, is not Cancelled, has not been
+// released (`vehicleReleased`), and its trip has not ended yet. A unit frees
+// AUTOMATICALLY once the booking's `toDate` has passed (end of that day, server
+// local time); an admin can still release a hold early via the "Free" control.
 import { listVehicles, getVehicle } from "../db/vehicles.db.js";
 import { listBookings } from "../utils/db.js";
 
 const unitsOf = (vehicle) => Math.max(1, parseInt(vehicle?.totalUnits, 10) || 1);
 
+/**
+ * True once the booking's trip is over — its `toDate` ("YYYY-MM-DD") is before
+ * today. An unparseable/missing date keeps the hold (fail safe: never silently
+ * double-book a vehicle because of bad data).
+ */
+export function tripEnded(booking, now = Date.now()) {
+  const end = Date.parse(`${booking?.toDate}T23:59:59`);
+  return Number.isFinite(end) && end < now;
+}
+
+const holdsUnit = (b) =>
+  b.vehicleId && b.status !== "Cancelled" && !b.vehicleReleased && !tripEnded(b);
+
 /** vehicleId -> number of currently-held units, across all bookings. */
 export function heldCounts() {
   const map = {};
   for (const b of listBookings()) {
-    if (!b.vehicleId || b.status === "Cancelled" || b.vehicleReleased) continue;
+    if (!holdsUnit(b)) continue;
     map[b.vehicleId] = (map[b.vehicleId] || 0) + 1;
   }
   return map;
@@ -24,7 +37,7 @@ export function heldCounts() {
 /** Bookings currently holding a given vehicleId (for the admin "Free" UI). */
 export function heldBookingsFor(vehicleId) {
   return listBookings()
-    .filter((b) => b.vehicleId === vehicleId && b.status !== "Cancelled" && !b.vehicleReleased)
+    .filter((b) => b.vehicleId === vehicleId && holdsUnit(b))
     .map((b) => ({
       id: b.id,
       name: b.name,
@@ -60,5 +73,5 @@ export function listVehiclesWithAvailability({ includeInactive = false } = {}) {
 }
 
 export default {
-  heldCounts, heldBookingsFor, withAvailability, isVehicleAvailable, listVehiclesWithAvailability,
+  tripEnded, heldCounts, heldBookingsFor, withAvailability, isVehicleAvailable, listVehiclesWithAvailability,
 };

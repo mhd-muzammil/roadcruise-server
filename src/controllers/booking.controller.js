@@ -74,9 +74,10 @@ export const createBooking = async (req, res) => {
   if (!Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: "A valid fare is required" });
   }
-  // Vehicle availability (manual-free inventory): a concrete fleet vehicle can be
-  // booked only while a unit is free. "No preference"/package bookings send no
-  // vehicleId and are never blocked. Held units are freed by an admin.
+  // Vehicle availability: a concrete fleet vehicle can be booked only while a
+  // unit is free. "No preference"/package bookings send no vehicleId and are
+  // never blocked. Held units free automatically once the trip's end date
+  // passes (or earlier, via cancellation / an admin release).
   if (vehicleId && !isVehicleAvailable(vehicleId)) {
     return res.status(409).json({ error: "This vehicle is already booked — please choose another." });
   }
@@ -127,8 +128,8 @@ export const createBooking = async (req, res) => {
     drop: drop || "",
     vehicle: vehicle || "",
     // Concrete fleet vehicle this booking holds a unit of (null for
-    // package/"no preference"). `vehicleReleased` is flipped true when an admin
-    // frees the unit after the trip — see services/availability.js.
+    // package/"no preference"). The unit frees automatically after `toDate`;
+    // `vehicleReleased` lets an admin free it earlier — see services/availability.js.
     vehicleId: vehicleId || null,
     vehicleReleased: false,
     packageName: packageName || "",
