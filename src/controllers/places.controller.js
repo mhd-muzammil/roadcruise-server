@@ -2,7 +2,8 @@
 // provider directly — it calls our API, which proxies two free, keyless
 // OpenStreetMap-backed services:
 //
-//   GET /api/places/search?q=…            -> Photon (komoot) autocomplete,
+//   GET /api/places/search?q=…            -> Photon (komoot) + Nominatim
+//                                            autocomplete, merged + deduped,
 //                                            biased to South India, IN-only
 //   GET /api/places/route?fromLat=…&…     -> OSRM driving distance + duration,
 //                                            with a haversine fallback so a
@@ -16,6 +17,7 @@
 // nationwide (IN); the bias only ranks nearby places first.
 const BIAS = { lat: 13.0827, lon: 80.2707 };
 const PHOTON_URL = "https://photon.komoot.io/api/";
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
 const FETCH_TIMEOUT_MS = 6000;
 
@@ -77,7 +79,47 @@ function toSuggestion(feature) {
   };
 }
 
-/** GET /api/places/search?q=vandalur */
+/** Nominatim (jsonv2 + addressdetails) result -> the same flat suggestion shape. */
+function nominatimToSuggestion(item) {
+  const lat = Number(item?.lat);
+  const lon = Number(item?.lon);
+  const a = item?.address || {};
+  const name = item?.name || String(item?.display_name || "").split(",")[0].trim();
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const parts = [];
+  for (const part of [
+    name,
+    a.road,
+    a.neighbourhood || a.suburb,
+    a.village || a.town || a.city_district || a.city,
+    a.state_district || a.county,
+    a.state,
+    a.postcode,
+  ]) {
+    if (part && !parts.includes(String(part))) parts.push(String(part));
+  }
+  return {
+    id: `nom${item.place_id || ""}:${lat.toFixed(4)},${lon.toFixed(4)}`,
+    name,
+    label: parts.join(", "),
+    lat,
+    lon,
+  };
+}
+
+// Dedup keys: same label, or same name within ~1 km — the two providers often
+// return the same place with slightly different coordinates/labels.
+const normText = (s) => String(s).toLowerCase().replace(/\s+/g, " ").trim();
+const dedupKeys = (s) => [normText(s.label), `${normText(s.name)}@${s.lat.toFixed(2)},${s.lon.toFixed(2)}`];
+
+/**
+ * GET /api/places/search?q=vandalur
+ * Queries Photon AND Nominatim in parallel and merges the results — each source
+ * alone misses plenty of localities (Photon's autocomplete index is much
+ * sparser for small towns/streets; Nominatim has no typo tolerance), so the
+ * union gives far better coverage. One source failing never empties the list;
+ * only both failing is an error.
+ */
 export const searchPlaces = async (req, res) => {
   const q = String(req.query.q || "").trim();
   if (q.length < 2) return res.json([]);
@@ -86,24 +128,45 @@ export const searchPlaces = async (req, res) => {
   const cached = searchCache.get(key);
   if (cached) return res.json(cached);
 
-  try {
-    const url = `${PHOTON_URL}?q=${encodeURIComponent(q)}&limit=8&lang=en&lat=${BIAS.lat}&lon=${BIAS.lon}`;
-    const data = await fetchJson(url);
-    const seen = new Set();
-    const results = [];
-    for (const f of data?.features || []) {
-      const s = toSuggestion(f);
-      if (!s || seen.has(s.label)) continue;
-      seen.add(s.label);
-      results.push(s);
-      if (results.length >= 6) break;
-    }
-    searchCache.set(key, results);
-    res.json(results);
-  } catch (e) {
-    console.error("[places] search failed:", e.message);
-    res.status(502).json({ error: "Place search is temporarily unavailable" });
+  const photonUrl = `${PHOTON_URL}?q=${encodeURIComponent(q)}&limit=15&lang=en&lat=${BIAS.lat}&lon=${BIAS.lon}`;
+  const nominatimUrl =
+    `${NOMINATIM_URL}?q=${encodeURIComponent(q)}&format=jsonv2&addressdetails=1&countrycodes=in&limit=10&accept-language=en`;
+
+  const [photon, nominatim] = await Promise.allSettled([fetchJson(photonUrl), fetchJson(nominatimUrl)]);
+
+  const candidates = [];
+  if (photon.status === "fulfilled") {
+    for (const f of photon.value?.features || []) candidates.push(toSuggestion(f));
+  } else {
+    console.error("[places] photon search failed:", photon.reason?.message);
   }
+  if (nominatim.status === "fulfilled") {
+    const items = Array.isArray(nominatim.value) ? nominatim.value : [];
+    for (const item of items) candidates.push(nominatimToSuggestion(item));
+  } else {
+    console.error("[places] nominatim search failed:", nominatim.reason?.message);
+  }
+
+  if (photon.status === "rejected" && nominatim.status === "rejected") {
+    return res.status(502).json({ error: "Place search is temporarily unavailable" });
+  }
+
+  const seen = new Set();
+  const results = [];
+  for (const s of candidates) {
+    if (!s) continue;
+    const keys = dedupKeys(s);
+    if (keys.some((k) => seen.has(k))) continue;
+    keys.forEach((k) => seen.add(k));
+    results.push(s);
+    if (results.length >= 8) break;
+  }
+  // Cache only fully-merged answers — a partial (one source down) result set
+  // must not be pinned for an hour; the next request retries the failed source.
+  if (photon.status === "fulfilled" && nominatim.status === "fulfilled") {
+    searchCache.set(key, results);
+  }
+  res.json(results);
 };
 
 // Great-circle distance (km) — the fallback when OSRM is unreachable. Scaled
