@@ -291,6 +291,17 @@ test("a town and the station inside it both survive (dedup is kind-aware)", asyn
   assert.match(res.body[1].label, /^Vandalur \(Railway Station\)/, "the station's label is distinguishable");
 });
 
+test("meaningless OSM values (building=yes) produce no kind badge", async () => {
+  photonResult = photonPayload({ name: "Some Complex", osm_value: "yes" });
+  nominatimResult = [];
+
+  const res = mockRes();
+  await searchPlaces(reqFor("noise-kind-test"), res);
+
+  assert.equal(res.body[0].kind, "", "'yes' is never shown to a customer");
+  assert.equal(res.body[0].label, "Some Complex, Chennai, Tamil Nadu, 600001", "and never reaches the label");
+});
+
 test("genuine duplicates (same name, kind and place) still collapse", async () => {
   photonResult = {
     features: [1, 2].map((n) => ({

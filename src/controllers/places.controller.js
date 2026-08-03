@@ -123,9 +123,13 @@ const PLAIN_KINDS = new Set([
 const titleCase = (s) =>
   String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
+// OSM tag values that carry no meaning for a customer — `building=yes` must not
+// render as a "Yes" badge in the dropdown.
+const NOISE_KINDS = new Set(["yes", "no", "unknown", "point", "node"]);
+
 /** Human-readable kind for an OSM value ("station" -> "Railway Station"). */
 function kindOf(osmValue) {
-  if (!osmValue) return "";
+  if (!osmValue || NOISE_KINDS.has(osmValue)) return "";
   return KIND_LABELS[osmValue] || titleCase(osmValue);
 }
 
