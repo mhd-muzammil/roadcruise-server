@@ -7,7 +7,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { searchPlaces } from "../places.controller.js";
+import { searchPlaces, detectCategory } from "../places.controller.js";
 
 // ---- tiny test doubles -------------------------------------------------------
 
@@ -28,6 +28,7 @@ const photonPayload = (...names) => ({
     properties: {
       name: typeof name === "string" ? name : name.name,
       countrycode: typeof name === "string" ? "IN" : name.countrycode || "IN",
+      osm_value: typeof name === "string" ? undefined : name.osm_value,
       city: "Chennai",
       state: "Tamil Nadu",
       postcode: "600001",
@@ -50,18 +51,24 @@ const nominatimPayload = (...names) =>
   }));
 
 // Route the stubbed fetch by upstream host. `null` payload = simulated outage.
-let photonResult, nominatimResult;
+// `taggedResult` answers the extra osm_tag-filtered Photon call that a typed
+// category ("… railway station") triggers.
+let photonResult, nominatimResult, taggedResult;
 let fetchCalls;
 const realFetch = global.fetch;
 
 beforeEach(() => {
   fetchCalls = [];
+  taggedResult = { features: [] };
   global.fetch = async (url) => {
-    fetchCalls.push(String(url));
+    const href = String(url);
+    fetchCalls.push(href);
     // Route by HOSTNAME — the search term also appears in the query string, so
     // a substring check on the whole URL would misroute (e.g. q="photon-down").
-    const host = new URL(String(url)).hostname;
-    const payload = host.includes("komoot") ? photonResult : nominatimResult;
+    const host = new URL(href).hostname;
+    const payload = host.includes("komoot")
+      ? (href.includes("osm_tag=") ? taggedResult : photonResult)
+      : nominatimResult;
     if (payload === null) throw new Error("simulated upstream outage");
     return { ok: true, json: async () => payload };
   };
@@ -211,4 +218,104 @@ test("queries under 2 chars return [] without touching any upstream", async () =
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, []);
   assert.equal(fetchCalls.length, 0, "no upstream call for a 1-char query");
+});
+
+// ---- 8. Category detection ---------------------------------------------------
+
+test("detectCategory maps typed categories to OSM tags and strips the phrase", () => {
+  assert.deepEqual(detectCategory("vandalur railway station"), { tag: "railway:station", base: "vandalur" });
+  assert.deepEqual(detectCategory("Tambaram Train Station"), { tag: "railway:station", base: "tambaram" });
+  // "bus station" must win over the bare "station" phrase (longest match first).
+  assert.deepEqual(detectCategory("kelambakkam bus station"), { tag: "amenity:bus_station", base: "kelambakkam" });
+  assert.deepEqual(detectCategory("chennai airport"), { tag: "aeroway:aerodrome", base: "chennai" });
+  assert.equal(detectCategory("vandalur"), null, "a plain place name is not a category");
+  assert.equal(detectCategory("railway station"), null, "a category with no place left is not usable");
+});
+
+// ---- 9. A typed category finds places OSM names bare -------------------------
+
+test("'X railway station' surfaces the station OSM calls plain 'X', ranked first", async () => {
+  // What the upstreams really do: the literal phrase matches almost nothing,
+  // while the tag-filtered lookup finds the station (named just "Vandalur").
+  photonResult = photonPayload("Kilambakkam Railway Station");
+  nominatimResult = [];
+  taggedResult = photonPayload({ name: "Vandalur", osm_value: "station" });
+
+  const res = mockRes();
+  await searchPlaces(reqFor("vandalur railway station"), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(fetchCalls.length, 3, "a third, tag-filtered lookup is issued");
+  assert.ok(
+    fetchCalls.some((u) => u.includes("osm_tag=railway%3Astation") && u.includes("vandalur")),
+    "the tagged lookup drops the category words and filters by railway:station"
+  );
+  assert.equal(res.body[0].name, "Vandalur", "the station ranks first — it is what was typed");
+  assert.equal(res.body[0].kind, "Railway Station");
+  assert.match(res.body[0].label, /Vandalur \(Railway Station\)/, "the kind is woven into the stored label");
+});
+
+test("no category in the query → no third lookup", async () => {
+  photonResult = photonPayload("Chennai");
+  nominatimResult = [];
+
+  await searchPlaces(reqFor("chennai-plain-test"), mockRes());
+  assert.equal(fetchCalls.length, 2, "only the two general sources are queried");
+});
+
+// ---- 10. Kind labelling + kind-aware dedup ----------------------------------
+
+test("a town and the station inside it both survive (dedup is kind-aware)", async () => {
+  // Same name, same rounded coordinates — only the kind differs. Before this
+  // was kind-aware, the station was silently dropped as a duplicate.
+  photonResult = {
+    features: [
+      {
+        properties: { name: "Vandalur", countrycode: "IN", osm_value: "town", state: "Tamil Nadu", osm_type: "N", osm_id: 1 },
+        geometry: { coordinates: [80.083, 12.8921] },
+      },
+      {
+        properties: { name: "Vandalur", countrycode: "IN", osm_value: "station", state: "Tamil Nadu", osm_type: "N", osm_id: 2 },
+        geometry: { coordinates: [80.085, 12.8916] },
+      },
+    ],
+  };
+  nominatimResult = [];
+
+  const res = mockRes();
+  await searchPlaces(reqFor("kind-dedup-test"), res);
+
+  assert.equal(res.body.length, 2, "both the town and the station are offered");
+  assert.deepEqual(res.body.map((s) => s.kind), ["Town", "Railway Station"]);
+  assert.equal(res.body[0].label, "Vandalur, Tamil Nadu", "a plain town label carries no kind suffix");
+  assert.match(res.body[1].label, /^Vandalur \(Railway Station\)/, "the station's label is distinguishable");
+});
+
+test("genuine duplicates (same name, kind and place) still collapse", async () => {
+  photonResult = {
+    features: [1, 2].map((n) => ({
+      properties: { name: "Guduvancheri", countrycode: "IN", osm_value: "town", state: "Tamil Nadu", osm_type: "N", osm_id: n },
+      geometry: { coordinates: [80.06, 12.84] },
+    })),
+  };
+  nominatimResult = [];
+
+  const res = mockRes();
+  await searchPlaces(reqFor("true-dupe-test"), res);
+  assert.equal(res.body.length, 1, "identical places are still deduped");
+});
+
+// ---- 11. Blending: Nominatim is actually represented ------------------------
+
+test("Nominatim results are blended in, not buried behind a full Photon list", async () => {
+  photonResult = photonPayload("P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8");
+  nominatimResult = nominatimPayload("NomOnly1", "NomOnly2");
+
+  const res = mockRes();
+  await searchPlaces(reqFor("blend-test"), res);
+
+  const names = res.body.map((s) => s.name);
+  assert.equal(res.body.length, 8);
+  assert.ok(names.includes("NomOnly1"), "the second source is represented even when Photon could fill every slot");
+  assert.equal(names[0], "P1", "Photon still leads — it ranks autocomplete better");
 });

@@ -58,22 +58,104 @@ async function fetchJson(url) {
   }
 }
 
+// --- Place kinds -------------------------------------------------------------
+// OSM names are usually the BARE place name: Vandalur's railway station is
+// named just "Vandalur", identical to the town wrapped around it. So we surface
+// each result's kind ("Railway Station"), which lets a customer tell those two
+// apart, keeps them from deduping into one, and — with the category search
+// below — makes them findable by the words people actually type.
+
+const KIND_LABELS = {
+  station: "Railway Station",
+  halt: "Railway Halt",
+  subway_entrance: "Metro Entrance",
+  bus_station: "Bus Station",
+  bus_stop: "Bus Stop",
+  aerodrome: "Airport",
+  terminal: "Airport Terminal",
+  ferry_terminal: "Ferry Terminal",
+  taxi: "Taxi Stand",
+  hospital: "Hospital",
+  clinic: "Clinic",
+  place_of_worship: "Temple / Church / Mosque",
+  hotel: "Hotel",
+  guest_house: "Guest House",
+  resort: "Resort",
+  mall: "Mall",
+  supermarket: "Supermarket",
+  marketplace: "Market",
+  school: "School",
+  college: "College",
+  university: "University",
+  stadium: "Stadium",
+  zoo: "Zoo",
+  park: "Park",
+  beach: "Beach",
+  museum: "Museum",
+  attraction: "Attraction",
+  restaurant: "Restaurant",
+  motorway_junction: "Junction",
+  // Road classes read as jargon otherwise ("Residential", "Tertiary").
+  residential: "Road",
+  primary: "Road",
+  secondary: "Road",
+  tertiary: "Road",
+  unclassified: "Road",
+  service: "Road",
+  living_street: "Road",
+  trunk: "Highway",
+  motorway: "Highway",
+  track: "Path",
+  path: "Path",
+  footway: "Path",
+};
+
+// Kinds that add nothing to a label: administrative places (the name already
+// reads as a place) and road segments (the name usually ends in "Road").
+const PLAIN_KINDS = new Set([
+  "city", "town", "village", "hamlet", "suburb", "neighbourhood", "locality",
+  "quarter", "state", "district", "county", "region", "municipality", "borough",
+  "island", "administrative", "yes",
+  "residential", "primary", "secondary", "tertiary", "trunk", "motorway",
+  "unclassified", "service", "living_street", "track", "path", "footway", "road",
+]);
+
+const titleCase = (s) =>
+  String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** Human-readable kind for an OSM value ("station" -> "Railway Station"). */
+function kindOf(osmValue) {
+  if (!osmValue) return "";
+  return KIND_LABELS[osmValue] || titleCase(osmValue);
+}
+
+/**
+ * Display label: "Name (Kind), locality chain". The kind is woven in only for
+ * distinguishing places (a station/airport/hospital), never for towns or roads
+ * — the booking stores this label, so a driver must be able to read which
+ * "Vandalur" the customer meant.
+ */
+function buildLabel(name, osmValue, localityParts) {
+  const kind = kindOf(osmValue);
+  const head = kind && !PLAIN_KINDS.has(osmValue) ? `${name} (${kind})` : name;
+  const parts = [head];
+  for (const part of localityParts) {
+    if (part && !parts.includes(String(part)) && String(part) !== name) parts.push(String(part));
+  }
+  return parts.join(", ");
+}
+
 /** Photon feature -> the flat suggestion shape the autocomplete renders. */
 function toSuggestion(feature) {
   const p = feature?.properties || {};
   const [lon, lat] = feature?.geometry?.coordinates || [];
   if (!p.name || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   if (p.countrycode && p.countrycode !== "IN") return null;
-  // Human label: name + locality chain, deduped (Photon often repeats the name
-  // as the city/district for towns).
-  const parts = [];
-  for (const part of [p.name, p.street, p.district, p.city, p.state, p.postcode]) {
-    if (part && !parts.includes(String(part))) parts.push(String(part));
-  }
   return {
     id: `${p.osm_type || "N"}${p.osm_id || ""}:${lat.toFixed(4)},${lon.toFixed(4)}`,
     name: p.name,
-    label: parts.join(", "),
+    kind: kindOf(p.osm_value),
+    label: buildLabel(p.name, p.osm_value, [p.street, p.district, p.city, p.state, p.postcode]),
     lat,
     lon,
   };
@@ -86,39 +168,96 @@ function nominatimToSuggestion(item) {
   const a = item?.address || {};
   const name = item?.name || String(item?.display_name || "").split(",")[0].trim();
   if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-  const parts = [];
-  for (const part of [
-    name,
-    a.road,
-    a.neighbourhood || a.suburb,
-    a.village || a.town || a.city_district || a.city,
-    a.state_district || a.county,
-    a.state,
-    a.postcode,
-  ]) {
-    if (part && !parts.includes(String(part))) parts.push(String(part));
-  }
   return {
     id: `nom${item.place_id || ""}:${lat.toFixed(4)},${lon.toFixed(4)}`,
     name,
-    label: parts.join(", "),
+    kind: kindOf(item.type),
+    label: buildLabel(name, item.type, [
+      a.road,
+      a.neighbourhood || a.suburb,
+      a.village || a.town || a.city_district || a.city,
+      a.state_district || a.county,
+      a.state,
+      a.postcode,
+    ]),
     lat,
     lon,
   };
 }
 
-// Dedup keys: same label, or same name within ~1 km — the two providers often
-// return the same place with slightly different coordinates/labels.
+// Dedup keys: same label, or same name+kind within ~1 km. The KIND matters —
+// a town and the railway station inside it share a name and coordinates, and
+// collapsing them would delete exactly the result the customer wanted.
 const normText = (s) => String(s).toLowerCase().replace(/\s+/g, " ").trim();
-const dedupKeys = (s) => [normText(s.label), `${normText(s.name)}@${s.lat.toFixed(2)},${s.lon.toFixed(2)}`];
+const dedupKeys = (s) => [
+  `${normText(s.label)}`,
+  `${normText(s.name)}|${s.kind}@${s.lat.toFixed(2)},${s.lon.toFixed(2)}`,
+];
+
+// --- Category-aware search ---------------------------------------------------
+// People type "vandalur railway station", but OSM calls it "Vandalur". Photon
+// can filter by OSM tag, so when the query carries a category word we ALSO run
+// a tagged search on the remaining words and rank those hits first. Longest
+// phrases are matched first so "bus station" never resolves as bare "station".
+
+const CATEGORY_TAGS = [
+  { phrases: ["railway station", "train station", "rly station", "metro station", "railway"], tag: "railway:station" },
+  { phrases: ["bus terminus", "bus terminal", "bus station", "bus stand", "bus depot"], tag: "amenity:bus_station" },
+  { phrases: ["bus stop"], tag: "highway:bus_stop" },
+  { phrases: ["airport"], tag: "aeroway:aerodrome" },
+  { phrases: ["hospital"], tag: "amenity:hospital" },
+  { phrases: ["temple", "church", "mosque"], tag: "amenity:place_of_worship" },
+  { phrases: ["hotel"], tag: "tourism:hotel" },
+  { phrases: ["mall"], tag: "shop:mall" },
+  { phrases: ["university"], tag: "amenity:university" },
+  { phrases: ["college"], tag: "amenity:college" },
+  { phrases: ["school"], tag: "amenity:school" },
+  { phrases: ["station"], tag: "railway:station" }, // bare "station" — last resort
+];
+
+const CATEGORY_PHRASES = CATEGORY_TAGS.flatMap(({ phrases, tag }) =>
+  phrases.map((phrase) => ({ phrase, tag }))
+).sort((a, b) => b.phrase.length - a.phrase.length);
+
+/** Detect a typed category -> { tag, base } with the category words stripped. */
+export function detectCategory(q) {
+  const lower = String(q).toLowerCase();
+  for (const { phrase, tag } of CATEGORY_PHRASES) {
+    const re = new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    if (!re.test(lower)) continue;
+    // The LONGEST matching phrase decides — never fall through to a shorter,
+    // overlapping one ("railway station" must not degrade into searching for
+    // the leftover word "station"). No place name left => nothing to look up.
+    const base = lower.replace(re, " ").replace(/\s+/g, " ").trim();
+    return base.length >= 2 ? { tag, base } : null;
+  }
+  return null;
+}
+
+/**
+ * Blend the two providers 2:1 (Photon, Photon, Nominatim, …). Photon ranks
+ * autocomplete better, but a strict concat let it fill every slot and Nominatim
+ * never surfaced — this guarantees the second source is actually represented.
+ */
+function blend(photonList, nominatimList) {
+  const out = [];
+  let p = 0;
+  let n = 0;
+  while (p < photonList.length || n < nominatimList.length) {
+    for (let i = 0; i < 2 && p < photonList.length; i++) out.push(photonList[p++]);
+    if (n < nominatimList.length) out.push(nominatimList[n++]);
+  }
+  return out;
+}
 
 /**
  * GET /api/places/search?q=vandalur
  * Queries Photon AND Nominatim in parallel and merges the results — each source
  * alone misses plenty of localities (Photon's autocomplete index is much
  * sparser for small towns/streets; Nominatim has no typo tolerance), so the
- * union gives far better coverage. One source failing never empties the list;
- * only both failing is an error.
+ * union gives far better coverage. A typed category ("… railway station") adds
+ * a third, tag-filtered lookup so places OSM names bare are still findable.
+ * Any source failing never empties the list; only ALL failing is an error.
  */
 export const searchPlaces = async (req, res) => {
   const q = String(req.query.q || "").trim();
@@ -128,28 +267,49 @@ export const searchPlaces = async (req, res) => {
   const cached = searchCache.get(key);
   if (cached) return res.json(cached);
 
-  const photonUrl = `${PHOTON_URL}?q=${encodeURIComponent(q)}&limit=15&lang=en&lat=${BIAS.lat}&lon=${BIAS.lon}`;
+  const photonQuery = (text, tag) =>
+    `${PHOTON_URL}?q=${encodeURIComponent(text)}&limit=15&lang=en&lat=${BIAS.lat}&lon=${BIAS.lon}` +
+    (tag ? `&osm_tag=${encodeURIComponent(tag)}` : "");
+  const photonUrl = photonQuery(q);
   const nominatimUrl =
     `${NOMINATIM_URL}?q=${encodeURIComponent(q)}&format=jsonv2&addressdetails=1&countrycodes=in&limit=10&accept-language=en`;
 
-  const [photon, nominatim] = await Promise.allSettled([fetchJson(photonUrl), fetchJson(nominatimUrl)]);
+  // "vandalur railway station" -> also ask Photon for railway:station places
+  // named "vandalur", because that station's OSM name is just "Vandalur".
+  const category = detectCategory(q);
+  const attempts = [fetchJson(photonUrl), fetchJson(nominatimUrl)];
+  if (category) attempts.push(fetchJson(photonQuery(category.base, category.tag)));
 
-  const candidates = [];
+  const [photon, nominatim, tagged] = await Promise.allSettled(attempts);
+
+  const photonList = [];
+  const nominatimList = [];
+  const categoryList = [];
   if (photon.status === "fulfilled") {
-    for (const f of photon.value?.features || []) candidates.push(toSuggestion(f));
+    for (const f of photon.value?.features || []) photonList.push(toSuggestion(f));
   } else {
     console.error("[places] photon search failed:", photon.reason?.message);
   }
   if (nominatim.status === "fulfilled") {
     const items = Array.isArray(nominatim.value) ? nominatim.value : [];
-    for (const item of items) candidates.push(nominatimToSuggestion(item));
+    for (const item of items) nominatimList.push(nominatimToSuggestion(item));
   } else {
     console.error("[places] nominatim search failed:", nominatim.reason?.message);
   }
+  if (tagged?.status === "fulfilled") {
+    for (const f of tagged.value?.features || []) categoryList.push(toSuggestion(f));
+  } else if (tagged?.status === "rejected") {
+    console.error("[places] category search failed:", tagged.reason?.message);
+  }
 
-  if (photon.status === "rejected" && nominatim.status === "rejected") {
+  const settled = [photon, nominatim, ...(tagged ? [tagged] : [])];
+  if (settled.every((r) => r.status === "rejected")) {
     return res.status(502).json({ error: "Place search is temporarily unavailable" });
   }
+
+  // Category hits first (that IS what was typed), then the two general sources
+  // blended so neither monopolizes the list.
+  const candidates = [...categoryList, ...blend(photonList, nominatimList)];
 
   const seen = new Set();
   const results = [];
@@ -163,7 +323,7 @@ export const searchPlaces = async (req, res) => {
   }
   // Cache only fully-merged answers — a partial (one source down) result set
   // must not be pinned for an hour; the next request retries the failed source.
-  if (photon.status === "fulfilled" && nominatim.status === "fulfilled") {
+  if (settled.every((r) => r.status === "fulfilled")) {
     searchCache.set(key, results);
   }
   res.json(results);
