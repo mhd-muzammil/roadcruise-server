@@ -19,7 +19,34 @@ const BIAS = { lat: 13.0827, lon: 80.2707 };
 const PHOTON_URL = "https://photon.komoot.io/api/";
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
+// India Post's public PIN directory — the authoritative source for Indian
+// pincodes (OSM's postcode coverage is patchy and often stale). Keyless.
+const PINCODE_URL = "https://api.postalpincode.in/pincode";
 const FETCH_TIMEOUT_MS = 6000;
+
+// Hard geographic filter for Photon (it has no country parameter, but it does
+// take a bounding box) — this is what stops "Chengalpattu" from returning a
+// same-named or fuzzy-matched place in another country.
+// bbox = minLon,minLat,maxLon,maxLat
+const INDIA_BBOX = "68.0,6.5,97.5,37.5";
+
+// The operating region. Used as a RANKING signal, never a filter: Road Cruise
+// quotes trips beyond the south too, but when a name is ambiguous ("Salem",
+// "Kollam", "Palakkad", hundreds of village names repeated across India) the
+// southern match is the one the customer means. Covers TN, Kerala, Karnataka,
+// Andhra Pradesh, Telangana, Puducherry, Goa and the union territories.
+const SOUTH_BOX = { minLat: 7.9, maxLat: 20.6, minLon: 72.0, maxLon: 85.5 };
+const inSouth = (s) =>
+  s.lat >= SOUTH_BOX.minLat && s.lat <= SOUTH_BOX.maxLat &&
+  s.lon >= SOUTH_BOX.minLon && s.lon <= SOUTH_BOX.maxLon;
+
+/**
+ * Stable partition: southern results first, everything else after, each group
+ * keeping the order the sources produced. A distance SORT was rejected on
+ * purpose — it would bury the second provider's results behind whichever
+ * provider happened to return the nearest hit.
+ */
+const southFirst = (list) => [...list.filter(inSouth), ...list.filter((s) => !inSouth(s))];
 
 // --- Tiny TTL cache (insertion-ordered Map => cheap oldest-first eviction) ---
 function makeCache(ttlMs, maxEntries) {
@@ -123,6 +150,12 @@ const PLAIN_KINDS = new Set([
 const titleCase = (s) =>
   String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
+// Indian PINs are exactly six digits and never start with 0. OSM carries plenty
+// of malformed/foreign postcodes ("60001", "TN 600 001"), and showing one in a
+// label is worse than showing none — a driver reads it as the delivery area.
+const PIN_RE = /^[1-9]\d{5}$/;
+const validPin = (v) => (PIN_RE.test(String(v || "").trim()) ? String(v).trim() : null);
+
 // OSM tag values that carry no meaning for a customer — `building=yes` must not
 // render as a "Yes" badge in the dropdown.
 const NOISE_KINDS = new Set(["yes", "no", "unknown", "point", "node"]);
@@ -159,7 +192,7 @@ function toSuggestion(feature) {
     id: `${p.osm_type || "N"}${p.osm_id || ""}:${lat.toFixed(4)},${lon.toFixed(4)}`,
     name: p.name,
     kind: kindOf(p.osm_value),
-    label: buildLabel(p.name, p.osm_value, [p.street, p.district, p.city, p.state, p.postcode]),
+    label: buildLabel(p.name, p.osm_value, [p.street, p.district, p.city, p.state, validPin(p.postcode)]),
     lat,
     lon,
   };
@@ -182,7 +215,7 @@ function nominatimToSuggestion(item) {
       a.village || a.town || a.city_district || a.city,
       a.state_district || a.county,
       a.state,
-      a.postcode,
+      validPin(a.postcode),
     ]),
     lat,
     lon,
@@ -197,6 +230,23 @@ const dedupKeys = (s) => [
   `${normText(s.label)}`,
   `${normText(s.name)}|${s.kind}@${s.lat.toFixed(2)},${s.lon.toFixed(2)}`,
 ];
+
+const MAX_RESULTS = 8;
+
+/** Drop duplicates (order-preserving) and cap the list the dropdown renders. */
+function dedupe(candidates) {
+  const seen = new Set();
+  const results = [];
+  for (const s of candidates) {
+    if (!s) continue;
+    const keys = dedupKeys(s);
+    if (keys.some((k) => seen.has(k))) continue;
+    keys.forEach((k) => seen.add(k));
+    results.push(s);
+    if (results.length >= MAX_RESULTS) break;
+  }
+  return results;
+}
 
 // --- Category-aware search ---------------------------------------------------
 // People type "vandalur railway station", but OSM calls it "Vandalur". Photon
@@ -254,6 +304,94 @@ function blend(photonList, nominatimList) {
   return out;
 }
 
+// --- Pincode search ----------------------------------------------------------
+// Typing a PIN is how a lot of Indian customers give an address, and OSM alone
+// answers it badly: Photon barely indexes postcodes, and Nominatim only knows
+// the PIN centroids OSM happens to carry. So a pure 6-digit query is answered
+// from India Post's directory (authoritative names/district/state for every
+// live PIN) and each office name is then geocoded to get coordinates the fare
+// engine can use. Nominatim's own postcode lookup runs alongside as a fallback
+// for PINs India Post doesn't resolve.
+
+const MAX_PIN_GEOCODES = 3; // offices we geocode per PIN — keeps a PIN query cheap
+
+/** India Post -> [{ name, district, state, branchType }] (best-known offices first). */
+async function fetchPinOffices(pin) {
+  const data = await fetchJson(`${PINCODE_URL}/${pin}`);
+  const entry = Array.isArray(data) ? data[0] : null;
+  if (!entry || entry.Status !== "Success" || !Array.isArray(entry.PostOffice)) return [];
+  return entry.PostOffice.map((o) => ({
+    name: String(o?.Name || "").trim(),
+    district: String(o?.District || "").trim(),
+    state: String(o?.State || "").trim(),
+    // Head/Sub offices name larger, better-known localities than Branch offices.
+    branchType: String(o?.BranchType || ""),
+  })).filter((o) => o.name);
+}
+
+/** Geocode one office ("Raja Annamalai Puram", "Chennai") to a suggestion. */
+async function geocodeOffice(office, pin) {
+  const q = [office.name, office.district, office.state].filter(Boolean).join(", ");
+  const data = await fetchJson(
+    `${PHOTON_URL}?q=${encodeURIComponent(q)}&limit=1&lang=en&bbox=${INDIA_BBOX}&lat=${BIAS.lat}&lon=${BIAS.lon}`
+  );
+  const f = data?.features?.[0];
+  const [lon, lat] = f?.geometry?.coordinates || [];
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return {
+    id: `pin${pin}:${office.name.toLowerCase().replace(/\s+/g, "-")}`,
+    name: office.name,
+    kind: "Pincode Area",
+    // The PIN leads the label: it is what the customer typed, and it is what
+    // the driver will match against.
+    label: [`${office.name} — ${pin}`, office.district, office.state].filter(Boolean).join(", "),
+    lat,
+    lon,
+  };
+}
+
+/** All suggestions for a bare 6-digit PIN query. Never throws. */
+async function searchPincode(pin) {
+  const nominatimUrl =
+    `${NOMINATIM_URL}?postalcode=${encodeURIComponent(pin)}&countrycodes=in&format=jsonv2` +
+    `&addressdetails=1&limit=5&accept-language=en`;
+
+  const [officesRes, nominatimRes] = await Promise.allSettled([
+    fetchPinOffices(pin),
+    fetchJson(nominatimUrl),
+  ]);
+
+  const offices = officesRes.status === "fulfilled" ? officesRes.value : [];
+  if (officesRes.status === "rejected") {
+    console.error("[places] pincode directory failed:", officesRes.reason?.message);
+  }
+
+  // Head/Sub offices first — a Branch office is usually a hamlet nobody names.
+  const ranked = [...offices].sort((a, b) => {
+    const w = (o) => (o.branchType === "Head Post Office" ? 0 : o.branchType === "Sub Post Office" ? 1 : 2);
+    return w(a) - w(b);
+  });
+
+  const geocoded = (
+    await Promise.allSettled(ranked.slice(0, MAX_PIN_GEOCODES).map((o) => geocodeOffice(o, pin)))
+  )
+    .map((r) => (r.status === "fulfilled" ? r.value : null))
+    .filter(Boolean);
+
+  const fromNominatim = [];
+  if (nominatimRes.status === "fulfilled") {
+    const items = Array.isArray(nominatimRes.value) ? nominatimRes.value : [];
+    for (const item of items) {
+      const s = nominatimToSuggestion(item);
+      if (s) fromNominatim.push({ ...s, label: s.label.includes(pin) ? s.label : `${s.label}, ${pin}` });
+    }
+  } else {
+    console.error("[places] pincode geocode failed:", nominatimRes.reason?.message);
+  }
+
+  return { suggestions: [...geocoded, ...fromNominatim], complete: officesRes.status === "fulfilled" };
+}
+
 /**
  * GET /api/places/search?q=vandalur
  * Queries Photon AND Nominatim in parallel and merges the results — each source
@@ -271,12 +409,25 @@ export const searchPlaces = async (req, res) => {
   const cached = searchCache.get(key);
   if (cached) return res.json(cached);
 
+  // A bare PIN is a different lookup entirely — see searchPincode().
+  if (PIN_RE.test(q)) {
+    const { suggestions, complete } = await searchPincode(q);
+    const results = dedupe(suggestions);
+    if (complete && results.length) searchCache.set(key, results);
+    return res.json(results);
+  }
+
   const photonQuery = (text, tag) =>
-    `${PHOTON_URL}?q=${encodeURIComponent(text)}&limit=15&lang=en&lat=${BIAS.lat}&lon=${BIAS.lon}` +
+    `${PHOTON_URL}?q=${encodeURIComponent(text)}&limit=15&lang=en&bbox=${INDIA_BBOX}` +
+    `&lat=${BIAS.lat}&lon=${BIAS.lon}` +
     (tag ? `&osm_tag=${encodeURIComponent(tag)}` : "");
   const photonUrl = photonQuery(q);
+  // viewbox + bounded=0 is a SOFT bias: southern matches are preferred, but a
+  // Delhi or Mumbai query still resolves.
   const nominatimUrl =
-    `${NOMINATIM_URL}?q=${encodeURIComponent(q)}&format=jsonv2&addressdetails=1&countrycodes=in&limit=10&accept-language=en`;
+    `${NOMINATIM_URL}?q=${encodeURIComponent(q)}&format=jsonv2&addressdetails=1&countrycodes=in` +
+    `&limit=10&dedupe=1&accept-language=en` +
+    `&viewbox=${SOUTH_BOX.minLon},${SOUTH_BOX.maxLat},${SOUTH_BOX.maxLon},${SOUTH_BOX.minLat}&bounded=0`;
 
   // "vandalur railway station" -> also ask Photon for railway:station places
   // named "vandalur", because that station's OSM name is just "Vandalur".
@@ -312,19 +463,15 @@ export const searchPlaces = async (req, res) => {
   }
 
   // Category hits first (that IS what was typed), then the two general sources
-  // blended so neither monopolizes the list.
-  const candidates = [...categoryList, ...blend(photonList, nominatimList)];
+  // blended so neither monopolizes the list. Southern matches lead within each
+  // group — the fleet operates across South India, and place names repeat all
+  // over the country.
+  const candidates = [
+    ...southFirst(categoryList.filter(Boolean)),
+    ...southFirst(blend(photonList, nominatimList).filter(Boolean)),
+  ];
 
-  const seen = new Set();
-  const results = [];
-  for (const s of candidates) {
-    if (!s) continue;
-    const keys = dedupKeys(s);
-    if (keys.some((k) => seen.has(k))) continue;
-    keys.forEach((k) => seen.add(k));
-    results.push(s);
-    if (results.length >= 8) break;
-  }
+  const results = dedupe(candidates);
   // Cache only fully-merged answers — a partial (one source down) result set
   // must not be pinned for an hour; the next request retries the failed source.
   if (settled.every((r) => r.status === "fulfilled")) {
