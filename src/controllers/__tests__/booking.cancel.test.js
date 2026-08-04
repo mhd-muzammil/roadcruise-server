@@ -71,14 +71,19 @@ async function captureBothCancelEvents(fn) {
   return { customer, admin };
 }
 
+// Trip dates must stay in the FUTURE: a held vehicle unit is auto-freed once
+// the trip's toDate passes, so hard-coded dates silently rot the availability
+// assertions the moment the calendar catches up with them.
+const dayOffset = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+
 // A realistic Approved booking owned by `email`, holding an optional vehicle.
 const bookingSeed = (id, email, over = {}) => ({
   id,
   customerEmail: email,
   name: "Test Customer",
   phone: "9000000000",
-  fromDate: "2026-08-01",
-  toDate: "2026-08-03",
+  fromDate: dayOffset(7),
+  toDate: dayOffset(9),
   tripType: "Round-trip",
   item: "Innova Crysta",
   vehicle: "Innova Crysta",
