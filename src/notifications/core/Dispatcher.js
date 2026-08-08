@@ -1,10 +1,22 @@
 import config from "../config/notification.config.js";
-import { DeliveryStatus } from "../config/events.js";
+import { DeliveryStatus, Channels } from "../config/events.js";
 import { render } from "../templates/engine.js";
 import { resolveTemplate } from "../templates/registry.js";
 import { getProvider } from "../providers/index.js";
+import { buildVars } from "../config/dlt.js";
 import { metrics } from "../observability/metrics.js";
 import { auditLog } from "../audit/AuditLog.js";
+
+/**
+ * Terminal-success statuses a provider may declare for itself. Anything else it
+ * returns falls back to SENT, preserving the behaviour of every adapter that
+ * predates this (all of which return "sent").
+ */
+const ACCEPTED_STATUSES = new Set([
+  DeliveryStatus.SENT,
+  DeliveryStatus.SUBMITTED,
+  DeliveryStatus.DELIVERED,
+]);
 
 /**
  * Dispatcher — processes a single notification record:
@@ -39,15 +51,37 @@ export class Dispatcher {
       const rendered = render(def, record.channel, record.payload);
       const provider = getProvider(record.channel);
 
+      // India/DLT: SMS providers must send the approved Template ID for THIS
+      // event plus its variable values in registered order. Computed here (not
+      // in the provider) because the Dispatcher is the only place that holds
+      // the resolved template def and the rendered context together. Providers
+      // that don't need them simply ignore the extra fields.
+      const dltVars =
+        record.channel === Channels.SMS
+          ? buildVars(typeof def === "function" ? def(record.payload)?.text : def.text, record.payload)
+          : undefined;
+
       const result = await provider.send({
         to: record.recipient,
         subject: rendered.subject,
         body: rendered.body,
+        event: record.event,
+        vars: dltVars,
+        // The rendered context itself. MSG91 renders the DLT-approved template
+        // on its side from NAMED variables, so it needs the values by name
+        // rather than the ordered `vars` array Airtel IQ matches positionally.
+        context: record.payload,
+        correlationId: record.correlationId || record.id,
         meta: { buttons: def.buttons, mediaUrl: def.mediaUrl, attachments: record.attachments },
       });
 
       await this.repository.update(record.id, {
-        status: DeliveryStatus.SENT,
+        // Honour a provider-declared outcome when it is one the engine models,
+        // so a gateway that can only confirm ACCEPTANCE (MSG91) records
+        // SUBMITTED rather than overclaiming SENT. Providers that return
+        // anything else — every other adapter, all of which return "sent" —
+        // keep the previous behaviour exactly.
+        status: ACCEPTED_STATUSES.has(result.status) ? result.status : DeliveryStatus.SENT,
         provider: provider.name,
         attempts: record.attempts + 1,
         rendered,

@@ -10,7 +10,9 @@
     "test:notifications": "node --test-concurrency=1 --import ./src/notifications/__tests__/setup.env.mjs --test \"src/notifications/__tests__/*.test.js\"",
     "test:bookings": "node --test-concurrency=1 --import ./src/controllers/__tests__/setup.env.mjs --test \"src/controllers/__tests__/*.test.js\"",
     "test:payments": "node --test-concurrency=1 --test \"src/payments/__tests__/*.test.js\"",
-    "test:auth": "node --test-concurrency=1 --test \"src/auth/__tests__/*.test.js\""
+    "test:auth": "node --test-concurrency=1 --test \"src/auth/__tests__/*.test.js\"",
+    "dlt:templates": "node scripts/dlt-templates.mjs",
+    "msg91:templates": "node scripts/msg91-templates.mjs"
   },
   "keywords": [],
   "author": "",

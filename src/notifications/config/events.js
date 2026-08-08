@@ -69,6 +69,13 @@ export const DeliveryStatus = Object.freeze({
   QUEUED: "queued",
   PROCESSING: "processing",
   SENT: "sent",
+  // Accepted by the gateway's API but NOT yet known to have been handed to the
+  // operator. Distinct from SENT because MSG91's v5 Flow API answers HTTP 200
+  // {"type":"success"} and can still reject the message asynchronously
+  // (e.g. API-failed code 400) — visible only in its panel/alert emails. A
+  // provider opts into this by returning status:"submitted"; every other
+  // adapter keeps returning "sent" and is unaffected.
+  SUBMITTED: "submitted",
   DELIVERED: "delivered",
   READ: "read",
   FAILED: "failed",

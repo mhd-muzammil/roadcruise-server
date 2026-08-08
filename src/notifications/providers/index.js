@@ -6,6 +6,7 @@ import { SmtpEmailProvider } from "./email/SmtpEmailProvider.js";
 import { MockSmsProvider } from "./sms/MockSmsProvider.js";
 import { TwilioSmsProvider } from "./sms/TwilioSmsProvider.js";
 import { Msg91SmsProvider } from "./sms/Msg91SmsProvider.js";
+import { AirtelIqSmsProvider } from "./sms/AirtelIqSmsProvider.js";
 import { MockWhatsAppProvider } from "./whatsapp/MockWhatsAppProvider.js";
 import { MetaWhatsAppProvider } from "./whatsapp/MetaWhatsAppProvider.js";
 
@@ -24,6 +25,7 @@ const REGISTRY = {
     mock: () => new MockSmsProvider(),
     twilio: () => new TwilioSmsProvider(),
     msg91: () => new Msg91SmsProvider(),
+    airtel: () => new AirtelIqSmsProvider(),
     // textlocal -> add adapters here
   },
   [Channels.WHATSAPP]: {
