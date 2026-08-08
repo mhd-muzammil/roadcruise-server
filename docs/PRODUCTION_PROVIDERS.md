@@ -59,25 +59,39 @@ SMTP_TLS_REJECT_UNAUTHORIZED=true  # keep true in production
 
 **What to obtain**
 
-1. An [MSG91](https://msg91.com/) account with an **API key** (`MSG91_API_KEY`).
-2. A **DLT-approved sender ID** — the 6-character header registered on your DLT operator (`MSG91_SENDER_ID`).
-3. A **DLT flow template** approved on the DLT portal and configured in MSG91 (`MSG91_TEMPLATE_ID`). The template must contain a body variable that the rendered message text is injected into (`MSG91_BODY_VAR`, default `body`).
+1. An [MSG91](https://msg91.com/) account with an **AuthKey** (`MSG91_API_KEY`). Server-side only — it must never appear in the React bundle.
+2. The **DLT-approved sender ID / header** registered against your Principal Entity (`MSG91_SENDER_ID`). RoadCruise: `KVROCR`, Airtel PE ID `1701177061700570449`.
+3. **One MSG91 template per event**, each created from the content approved on the Airtel DLT portal and showing **"Verified by DLT"** in the MSG91 panel. MSG91 issues its own 24-char template id per template — that is what goes in the env vars below, *not* the 19-digit Airtel DLT id.
 
-**Capabilities:** sends OTP/transactional/booking/payment SMS uniformly — the engine renders the message body and the provider injects it into the DLT template's body variable. Uses the **v5 Flow API over built-in `fetch`** (no SDK). `AbortController` timeout with one transient-only retry.
+**Capabilities:** selects the approved template by notification event and sends **only the template id plus variable values** — never message text, which is what keeps the delivered content identical to the DLT-approved content. Uses the **v5 Flow API over built-in `fetch`** (no SDK). `AbortController` timeout; one attempt per call with the outcome classified retryable/terminal, and the notification engine owns backoff and dead-lettering.
+
+An event whose template id is unset **fails safe**: it dead-letters instead of sending unapproved content, and never affects the booking/payment flow that emitted it.
 
 **Env block**
 
 ```bash
 NOTIF_SMS_PROVIDER=msg91
 MSG91_API_KEY=your-msg91-authkey
-MSG91_SENDER_ID=RCRUSE            # 6-char DLT header
-MSG91_TEMPLATE_ID=your-dlt-flow-template-id
+MSG91_SENDER_ID=KVROCR            # approved 6-char DLT header
+
+# One MSG91 template id per event (MSG91 panel -> Templates)
+MSG91_OTP_TEMPLATE_ID=6a7359294976ac1599096612       # OTP_VERIFICATION      Verified by DLT
+MSG91_REMINDER_TEMPLATE_ID=6a735a25ab93306df0082913  # REMINDER_BEFORE_RIDE  Verified by DLT
+MSG91_BOOKING_TEMPLATE_ID=                           # BOOKING_CONFIRMATION  pending in MSG91
 
 # Optional (defaults shown)
-MSG91_BODY_VAR=body
 MSG91_DEFAULT_COUNTRY_CODE=91
 MSG91_BASE_URL=https://control.msg91.com
 MSG91_TIMEOUT_MS=15000
+# Only if the ##names## in your MSG91 template differ from the code defaults:
+# MSG91_OTP_VARS=otp=otp,company=companyName
+```
+
+Verify the mapping before and after deploying:
+
+```bash
+npm run msg91:templates                                          # what each event will send
+npm run msg91:templates -- --send-otp 9876543210 --code 482913   # ONE real SMS
 ```
 
 No SDK required — MSG91 uses built-in `fetch` (Node 18+).
@@ -142,7 +156,7 @@ Go live **one channel at a time**. Each step is independently reversible and tou
 - [ ] TLS verification is on: `SMTP_REQUIRE_TLS=true` and `SMTP_TLS_REJECT_UNAUTHORIZED=true`.
 - [ ] DLQ alerting is enabled and `NOTIF_DLQ_ALERT_EMAIL` points to a monitored ops inbox.
 - [ ] Rate limits are tuned for your Brevo plan (`SMTP_RATE_LIMIT` / `SMTP_RATE_DELTA_MS`, pool sizing).
-- [ ] MSG91 **DLT template is approved** and the sender ID is registered; `MSG91_TEMPLATE_ID` / `MSG91_SENDER_ID` match the approved DLT entities.
+- [ ] MSG91 templates show **"Verified by DLT"** and the sender ID is registered against the Principal Entity; `MSG91_OTP_TEMPLATE_ID` / `MSG91_REMINDER_TEMPLATE_ID` / `MSG91_SENDER_ID` match the MSG91 panel (`npm run msg91:templates`).
 - [ ] Meta access token is a **permanent / System User token** (not a temporary dev token).
 - [ ] For horizontal scale-out: **Redis** is configured (`REDIS_URL`, BullMQ) and **Postgres** is planned/wired (`DATABASE_URL`) so state is not tied to a single instance's JSON store.
 - [ ] Monitoring scrapes `GET /api/notifications/metrics` (delivery rate, failures, queue size, dead-letter count).

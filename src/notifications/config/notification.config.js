@@ -112,18 +112,35 @@ export const config = {
     smsFrom: process.env.TWILIO_SMS_FROM,
     whatsappFrom: process.env.TWILIO_WHATSAPP_FROM,
   },
-  // MSG91 (India DLT-compliant SMS). Uses the v5 Flow API with a pre-approved
-  // DLT template; the rendered message body is injected into the template's
-  // body variable (MSG91_BODY_VAR, default "body").
+  // MSG91 (India DLT-compliant SMS). Uses the v5 Flow API. The per-event MSG91
+  // template ids and their variable mappings live in config/msg91Templates.js
+  // (read lazily from MSG91_*_TEMPLATE_ID / MSG91_*_VARS), because which
+  // template a send uses is a per-EVENT decision, not a global credential.
   msg91: {
     authKey: process.env.MSG91_API_KEY,
+    // Approved 6-char DLT header (e.g. KVROCR); falls back to DLT_HEADER_ID's
+    // sender configured on the MSG91 template itself when unset.
     senderId: process.env.MSG91_SENDER_ID,
-    templateId: process.env.MSG91_TEMPLATE_ID,
     baseUrl: process.env.MSG91_BASE_URL || "https://control.msg91.com",
-    bodyVar: process.env.MSG91_BODY_VAR || "body",
     // Default country code prepended to bare 10-digit numbers (India = 91).
     defaultCountryCode: process.env.MSG91_DEFAULT_COUNTRY_CODE || "91",
     timeoutMs: int(process.env.MSG91_TIMEOUT_MS, 15000),
+  },
+  // Airtel IQ (Airtel's own CPaaS). India DLT-compliant: takes the rendered
+  // body plus the approved Entity ID + per-event Template ID (see config/dlt.js).
+  // Credentials come from the Airtel IQ console, NOT from the DLT portal.
+  airtelIq: {
+    customerId: process.env.AIRTEL_IQ_CUSTOMER_ID,
+    username: process.env.AIRTEL_IQ_USERNAME,
+    password: process.env.AIRTEL_IQ_PASSWORD,
+    // Approved 6-char DLT Header; falls back to DLT_HEADER_ID at send time.
+    senderId: process.env.AIRTEL_IQ_SENDER_ID,
+    baseUrl: process.env.AIRTEL_IQ_BASE_URL || "https://iqsms.airtel.in",
+    // SERVICE_IMPLICIT = transactional/service messages to your own customers
+    // (no DND scrubbing). Use PROMOTIONAL only for marketing blasts.
+    messageType: process.env.AIRTEL_IQ_MESSAGE_TYPE || "SERVICE_IMPLICIT",
+    defaultCountryCode: process.env.AIRTEL_IQ_DEFAULT_COUNTRY_CODE || "91",
+    timeoutMs: int(process.env.AIRTEL_IQ_TIMEOUT_MS, 15000),
   },
   metaWhatsApp: {
     // Mission env names take precedence; META_WHATSAPP_* kept for back-compat.

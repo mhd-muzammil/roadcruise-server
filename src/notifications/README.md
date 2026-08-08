@@ -266,22 +266,81 @@ Each channel has a **mock** adapter (default) and a **real** adapter that is **d
 | Channel | Mock (default) | Real (production) | Activation |
 |---|---|---|---|
 | email | `MockEmailProvider` (`mock-email`) | `SmtpEmailProvider` (`smtp`, nodemailer / Brevo) | `NOTIF_EMAIL_PROVIDER=smtp` + SMTP_* |
-| sms | `MockSmsProvider` (`mock-sms`) | `TwilioSmsProvider` (`twilio-sms`, twilio SDK) **or** `Msg91SmsProvider` (`msg91-sms`, global fetch) | `NOTIF_SMS_PROVIDER=twilio` + TWILIO_* — or — `NOTIF_SMS_PROVIDER=msg91` + MSG91_* |
+| sms | `MockSmsProvider` (`mock-sms`) | `TwilioSmsProvider` (`twilio-sms`, twilio SDK), `Msg91SmsProvider` (`msg91-sms`, global fetch) **or** `AirtelIqSmsProvider` (`airtel-iq-sms`, global fetch) | `NOTIF_SMS_PROVIDER=twilio` + TWILIO_* — or — `=msg91` + MSG91_* (see §7.2) — or — `=airtel` + AIRTEL_IQ_* + DLT_* (see §7.1) |
 | whatsapp | `MockWhatsAppProvider` (`mock-whatsapp`) | `MetaWhatsAppProvider` (`meta-whatsapp`, global fetch) | `NOTIF_WHATSAPP_PROVIDER=meta` + WHATSAPP_* (legacy `META_WHATSAPP_*` still honored as fallback) |
 
-**Provider contract** (`Provider.js`): `get name()` and `async send({ to, subject?, body, meta? }) → { providerMessageId, status, raw }`. On unrecoverable failure it **throws** — the Dispatcher converts throws into retry/dead-letter. Returning normally means "accepted".
+**Provider contract** (`Provider.js`): `get name()` and `async send({ to, subject?, body, event?, vars?, context?, correlationId?, meta? }) → { providerMessageId, status, raw }`. `event`, `vars` (ordered DLT variable values) and `context` (the rendered template context, for gateways that need variables *by name*) are supplied by the Dispatcher for India/DLT SMS providers; every other adapter ignores them. On unrecoverable failure it **throws** — the Dispatcher converts throws into retry/dead-letter. Returning normally means "accepted".
 
 Mock providers log to console and return a synthetic id. They also expose deterministic failure hooks for testing retry: a recipient containing **`fail@`** (email) or **`000000`** (sms/whatsapp) throws.
 
 **Activating real providers:**
 - **SMTP / Brevo:** `NOTIF_EMAIL_PROVIDER=smtp`, set `SMTP_HOST` (Brevo: `smtp-relay.brevo.com`) + `SMTP_PORT/SECURE/USER/PASS/FROM`. Ships with verified TLS (`minVersion TLSv1.2`), connection pooling, per-window rate limiting, connection/greeting/socket timeouts, and graceful reconnect on broken pooled connections. Sends HTML with auto plain-text fallback and supports attachments (nodemailer format); delivery status maps `accepted → sent` and throws when all recipients are rejected. Tunables: `SMTP_POOL/MAX_CONNECTIONS/MAX_MESSAGES/RATE_LIMIT/RATE_DELTA_MS/CONNECTION_TIMEOUT_MS/GREETING_TIMEOUT_MS/SOCKET_TIMEOUT_MS/REQUIRE_TLS/TLS_REJECT_UNAUTHORIZED`. Requires `npm i nodemailer` (already installed).
 - **Twilio SMS:** `NOTIF_SMS_PROVIDER=twilio`, set `TWILIO_ACCOUNT_SID/AUTH_TOKEN/SMS_FROM`. Requires `npm i twilio` (already installed).
-- **MSG91 SMS:** `NOTIF_SMS_PROVIDER=msg91`, set `MSG91_API_KEY`, `MSG91_SENDER_ID` (6-char DLT header), `MSG91_TEMPLATE_ID` (DLT flow template) (+ optional `MSG91_BODY_VAR/DEFAULT_COUNTRY_CODE/BASE_URL/TIMEOUT_MS`). India DLT-compliant, uses the v5 Flow API over built-in fetch (no SDK). Sends OTP/transactional/booking/payment SMS uniformly — the engine renders the body and the provider injects it into the DLT template's body variable. `AbortController` timeout. It does **one** attempt and **classifies** the outcome, attaching a `retryable` flag; the Dispatcher owns the actual retry/backoff (see §8). Transient failures (network, timeout, HTTP `408/429/500/502/503/504`) are retryable; permanent ones (bad config, invalid number, HTTP `400/401/403/404`, MSG91 logical errors) fail fast. Config is validated at startup — when `msg91` is selected, a missing `MSG91_API_KEY`/`MSG91_TEMPLATE_ID` **fails closed in production** (warns in development). The auth key, phone number and message body are never logged.
+- **MSG91 SMS:** `NOTIF_SMS_PROVIDER=msg91`, set `MSG91_API_KEY`, `MSG91_SENDER_ID` (approved 6-char DLT header, `KVROCR`) and the per-event template ids `MSG91_OTP_TEMPLATE_ID` / `MSG91_REMINDER_TEMPLATE_ID` / `MSG91_BOOKING_TEMPLATE_ID` (+ optional `MSG91_*_VARS/DEFAULT_COUNTRY_CODE/BASE_URL/TIMEOUT_MS`). India DLT-compliant, uses the v5 Flow API over built-in fetch (no SDK). **Selects the approved template by event and sends only variable values — never message text** (see §7.2); the rendered body is deliberately ignored, because MSG91 renders the DLT-approved content itself. `AbortController` timeout. It does **one** attempt and **classifies** the outcome, attaching a `retryable` flag; the Dispatcher owns the actual retry/backoff (see §8). Transient failures (network, timeout, HTTP `408/429/500/502/503/504`) are retryable; permanent ones (bad config, unmapped/unconfigured template, invalid number, HTTP `400/401/403/404`, MSG91 logical errors) fail fast. Config is validated at startup — when `msg91` is selected, a missing `MSG91_API_KEY`/`MSG91_SENDER_ID`/OTP id/reminder id **fails closed in production** (warns in development); the booking id is optional and only that event stops sending while it is unset. The auth key, the full phone number and variable values (the OTP is one) are never logged.
+- **Airtel IQ SMS:** `NOTIF_SMS_PROVIDER=airtel`, set `AIRTEL_IQ_CUSTOMER_ID/USERNAME/PASSWORD` + `AIRTEL_IQ_SENDER_ID` (approved 6-char DLT header, falls back to `DLT_HEADER_ID`) and the `DLT_*` template ids (+ optional `AIRTEL_IQ_BASE_URL/MESSAGE_TYPE/DEFAULT_COUNTRY_CODE/TIMEOUT_MS`). Uses Airtel's `v2/sms/send` xchange endpoint over built-in fetch (no SDK) with HTTP Basic auth. Sends the **rendered body** plus the per-event `dltTemplateId` and `entityId`; Airtel matches the body against the registered template operator-side. An event with **no registered template id fails permanently** rather than sending — an unregistered body is accepted with a `200` and then silently dropped by the operator, so dead-lettering is the only way it gets noticed. Same one-attempt/classify contract as MSG91: transient (network, timeout, `408/429/5xx`) retryable, permanent (bad config, unregistered template, invalid number, other `4xx`) not. Credentials come from the **Airtel IQ console**, which is a separate product from the DLT portal registration. Credentials, recipients and bodies are never logged.
 - **Meta WhatsApp:** `NOTIF_WHATSAPP_PROVIDER=meta`, set `WHATSAPP_PHONE_NUMBER_ID/ACCESS_TOKEN` (+ optional `WHATSAPP_API_VERSION/TIMEOUT_MS`); legacy `META_WHATSAPP_PHONE_NUMBER_ID/ACCESS_TOKEN/API_VERSION` are still honored as fallbacks. Uses built-in fetch (Node 18+), no SDK. Supports text, image and document (PDF) via public link, and template messages; `AbortController` timeout, a small transient retry (429/5xx/network) with deterministic backoff, and error mapping that never leaks the token.
 
 **Adding a new vendor:** write an adapter class implementing the contract under `providers/<channel>/`, then add one line to the `REGISTRY` in `providers/index.js` (e.g. `ses`, `sendgrid`, `resend` for email; `textlocal`, `kaleyra` for sms — `twilio` and `msg91` already ship; `twilio-whatsapp`, `interakt` for whatsapp). Select it via the channel's `NOTIF_*_PROVIDER` env var. Business code is untouched. (`getProvider` caches one instance per channel.)
 
 > Rich-content extras (`buttons`, `mediaUrl`, `attachments`) are passed to providers via `message.meta`. The mock and SMS-grade providers ignore them gracefully. The Meta adapter now supports text, image and document (PDF) messages via public link, and template messages; the SMTP adapter supports attachments in nodemailer format. WhatsApp rich-template buttons remain a registered extension point.
+
+---
+
+## 7.1 India DLT compliance (`config/dlt.js`)
+
+Every commercial SMS to an Indian number must match a **content template** pre-registered on a DLT portal and approved by the operators. Each approved template carries a 19-digit **Template ID** that must travel with the send. A body that does not match is accepted with a `200` and then **dropped silently** — the failure is invisible from the API response, which is why this module treats an unregistered event as a hard, non-retryable error.
+
+DLT identifiers are issued by the operator chain, not by the sender, so **the same Entity ID and Template IDs work through Airtel IQ, MSG91, or any other aggregator.** Registering once covers Jio/Airtel/Vi/BSNL.
+
+**Three worlds, one source of truth.** `config/dlt.js` ties together the `{{handlebars}}` template the engine renders, the `{#var#}` text a human registered on the portal, and the ordered variable values on the wire. The portal text is *derived from* the code templates, so an edit to an SMS template visibly changes the registration sheet — the signal that it must be re-registered before the edit can ship.
+
+```bash
+npm run dlt:templates            # the exact text to paste into the portal, per event
+npm run dlt:templates -- --env   # the .env block to fill in with approved ids
+npm run dlt:templates -- --json  # machine-readable
+```
+
+**Branding is fixed text, not a variable.** `companyName`, `supportPhone`, `supportEmail` and `websiteUrl` (`FIXED_KEYS`) are baked into the registered template as literals rather than registered as `{#var#}`. This is not cosmetic: operator scrubbing rejects templates that are mostly variable, and caps variable content at ~30 characters — a brand name alone can consume that entire budget, and the Header already asserts the brand. **Set `COMPANY_NAME` and `SUPPORT_PHONE` correctly *before* registering**, because changing them later invalidates every approved template.
+
+**Config.** `DLT_ENTITY_ID` (19-digit Principal Entity ID), `DLT_HEADER_ID` (approved 6-char sender header), and one `DLT_TID_<EVENT>` per event — e.g. `DLT_TID_BOOKING_CONFIRMED`. Ids are read lazily from env, matching how every real provider reads its credentials. `validateProviderConfig()` fails closed in production when `airtel` is selected with no registered ids, or when branding is still a `«CHANGEME»` placeholder.
+
+**Per-provider mapping — two different id spaces.** Airtel IQ submits the **rendered body** plus the 19-digit **Airtel DLT** template id (`DLT_TID_<EVENT>`, this module) and the operator matches the text. MSG91 works the other way round: the approved content lives *in MSG91*, and a send carries MSG91's own 24-char **MSG91 template id** plus **named** variable values (`config/msg91Templates.js`) - no message text at all. The two ids are not interchangeable; sending one where the other is expected is rejected. The Dispatcher hands every SMS provider both the ordered `vars` (Airtel) and the rendered `context` (MSG91), and each uses what it needs. See §7.2.
+
+> The round-trip invariant — *registered template text + ordered vars must reproduce the transmitted body byte-for-byte* — is enforced by a test (`__tests__/dlt.test.js`) across all SMS templates. If that test fails, SMS has silently stopped being delivered.
+
+---
+
+## 7.2 MSG91 template mapping (`config/msg91Templates.js`)
+
+RoadCruise sends through **MSG91** against its **Airtel DLT** registration (PE ID `1701177061700570449`, header `KVROCR`). MSG91 stores the approved content, so a send transmits **no message text** — only the template id for that event plus the values for its variables. That is what guarantees the delivered message is character-identical to what the operators approved.
+
+**One mapping, three facts per event:**
+
+| Event | MSG91 template | MSG91 template id (env) | Airtel DLT id |
+|---|---|---|---|
+| `auth.otp_requested` | `OTP_VERIFICATION` | `MSG91_OTP_TEMPLATE_ID` | `1077512810022246340` |
+| `trip.reminder` | `REMINDER_BEFORE_RIDE` | `MSG91_REMINDER_TEMPLATE_ID` | `1077340200023002579` |
+| `booking.confirmed` | `BOOKING_CONFIRMATION` | `MSG91_BOOKING_TEMPLATE_ID` | `1077397880030911933` |
+
+The Airtel DLT id is recorded **for cross-checking the MSG91 panel entry only** — it is never put on the wire to MSG91.
+
+**The Flow API keys the template as `flow_id`.** Not `template_id` — MSG91 accepts a `template_id` request with HTTP 200 and then rejects it asynchronously as API-failed code 400 ("Template ID ... missing, incorrect, or archived").
+
+**Variable names are configuration.** MSG91 templates use `##name##` placeholders and the names are whatever was typed into the MSG91 panel. For the DLT-verified OTP template those names are `alphanumeric` and `numeric` (the DLT variable *types*, carried over on import — not descriptions of meaning). `##alphanumeric##` occurs twice under one name, so MSG91 renders the same value in both the code position and the trailing signature; `##numeric##` has no determinable meaning and is deliberately left unmapped rather than guessed. `config/msg91Templates.js` ships defaults derived from the approved DLT content and this repo's SMS templates; a mismatch is corrected **without a deploy** via `MSG91_OTP_VARS` / `MSG91_REMINDER_VARS` / `MSG91_BOOKING_VARS`, written as `<msg91 variable name>=<context key>` in template order.
+
+**OTP is currently BLOCKED.** Its MSG91 template declares `##alphanumeric##` twice under one name and a mid-sentence `##numeric##`, so no variable mapping renders a correct message (`alphanumeric=OTP, numeric=""` loses the signature; `numeric=OTP` yields `…(OTP) 739104to verify…`; `alphanumeric=brand` yields "RoadCruise is your One-Time Password"). Rather than ship a wrong mapping, the entry carries `unresolved` and an empty `defaultVars`, so every OTP send fails **non-retryably** and dead-letters with the reason on the record. Fix the template in the MSG91 panel to match the DLT-approved text with two distinctly named variables, then set `MSG91_OTP_VARS` to those names — supplying the override is itself what lifts the block, no deploy required.
+
+**Nothing unapproved is ever sent.** An event with no mapped template, an unset template id, or an empty variable map raises a **non-retryable** error and dead-letters. That is deliberate: it is how booking SMS stays off the wire until `BOOKING_CONFIRMATION` exists in MSG91, and it never touches the booking itself — the Dispatcher isolates provider failures.
+
+**OTP.** The application generates the code and passes it in the event payload (`{{otp}}`). The provider never generates one, and deliberately does **not** use MSG91's `/api/v5/otp` endpoint, which would mint a second code with its own expiry and desynchronise verification.
+
+**The Flow API does not authenticate.** `POST /api/v5/flow/` answers `{"type":"success"}` even for a completely bogus auth key (verified against this account, 2026-08-08), so "accepted by MSG91" is **not** evidence a message was sent. Delivery-report endpoints do authenticate, so `--verify-key` uses one as the real credential check and the smoke test refuses to send until it passes. MSG91 also returns the request id in `message`, not `request_id`.
+
+```bash
+npm run msg91:templates                                    # mapping + what is missing
+npm run msg91:templates -- --verify-key                    # does the AuthKey actually work?
+npm run msg91:templates -- --send-otp 9876543210 --code 482913   # ONE real SMS
+```
 
 ---
 
@@ -536,10 +595,12 @@ All config comes from env (`config/notification.config.js`). Booleans accept `1/
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | _unset_ | Twilio creds. |
 | `TWILIO_SMS_FROM` | _unset_ | Twilio SMS sender. |
 | `TWILIO_WHATSAPP_FROM` | _unset_ | Twilio WhatsApp sender (for a future twilio-whatsapp adapter). |
-| `MSG91_API_KEY` | _unset_ | MSG91 auth key (required for msg91 provider). |
-| `MSG91_SENDER_ID` | _unset_ | 6-char DLT sender header. |
-| `MSG91_TEMPLATE_ID` | _unset_ | DLT flow template id. |
-| `MSG91_BODY_VAR` | `body` | Template body variable the rendered text is injected into. |
+| `MSG91_API_KEY` | _unset_ | MSG91 AuthKey (required for msg91 provider). **Server only** — never expose to the client bundle. |
+| `MSG91_SENDER_ID` | _unset_ | Approved 6-char DLT header (RoadCruise: `KVROCR`). |
+| `MSG91_OTP_TEMPLATE_ID` | _unset_ | MSG91 template id for `auth.otp_requested`. Required when `msg91` is selected. |
+| `MSG91_REMINDER_TEMPLATE_ID` | _unset_ | MSG91 template id for `trip.reminder`. Required when `msg91` is selected. |
+| `MSG91_BOOKING_TEMPLATE_ID` | _unset_ | MSG91 template id for `booking.confirmed`. Optional — that event fails safe while unset. |
+| `MSG91_OTP_VARS` / `MSG91_REMINDER_VARS` / `MSG91_BOOKING_VARS` | _unset_ | Override the `##name##` -> context-key mapping, e.g. `otp=otp,company=companyName`. |
 | `MSG91_DEFAULT_COUNTRY_CODE` | `91` | Default country code for recipient numbers. |
 | `MSG91_BASE_URL` | `https://control.msg91.com` | MSG91 API base URL. |
 | `MSG91_TIMEOUT_MS` | `15000` | Request timeout (ms). |
