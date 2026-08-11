@@ -7,7 +7,14 @@
 // against the dev DATA_DIR silently leaves a fake account behind. An explicit
 // DATA_DIR still wins, so CI can point it wherever it likes.
 import { fileURLToPath } from "url";
+import { rmSync } from "fs";
+const OWN_DATA_DIR = !process.env.DATA_DIR;
 process.env.DATA_DIR ||= fileURLToPath(new URL("../.tmp-otp-check/", import.meta.url));
+// Start from empty when we own the directory. The first run creates the test
+// user, so a second run against leftover state fails "flags new user" and looks
+// like a product regression — it is not, and that false alarm is worth ruling
+// out permanently. An explicitly supplied DATA_DIR is never deleted.
+if (OWN_DATA_DIR) rmSync(process.env.DATA_DIR, { recursive: true, force: true });
 process.env.NOTIF_SMS_PROVIDER = "mock";
 process.env.NOTIF_EMAIL_PROVIDER = "mock";
 process.env.NOTIF_WHATSAPP_PROVIDER = "mock";
