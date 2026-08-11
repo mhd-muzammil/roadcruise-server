@@ -68,6 +68,7 @@ export const config = {
     passwordReset: bool(process.env.PASSWORD_RESET_ENABLED, true),
     jwt: bool(process.env.JWT_ENABLED, true),
     refreshToken: bool(process.env.REFRESH_TOKEN_ENABLED, true),
+    otpLogin: bool(process.env.OTP_LOGIN_ENABLED, true),
   },
 
   // ---- Password hashing ----  scrypt (default) | argon2 | bcrypt (lazy)
@@ -98,6 +99,23 @@ export const config = {
     windowMs: int(process.env.AUTH_RATE_WINDOW_MS, 60 * 1000),
     maxLogin: int(process.env.AUTH_RATE_MAX_LOGIN, 10),
     maxSensitive: int(process.env.AUTH_RATE_MAX_SENSITIVE, 5), // forgot/reset/verify
+  },
+
+  // ---- Phone (SMS) OTP login ----
+  // ttlSec MUST stay consistent with the DLT-approved SMS template, which says
+  // "Valid for 5 minutes" as FIXED text — changing it here silently makes every
+  // OTP message lie, and the registered wording cannot be edited without
+  // re-approval. maxAttempts bounds guessing a 6-digit code (10^6 space);
+  // resendCooldownSec stops the endpoint being used as a free SMS cannon at
+  // someone else’s number, since every send costs real money.
+  otpLogin: {
+    codeLength: int(process.env.OTP_CODE_LENGTH, 6),
+    ttlSec: int(process.env.OTP_TTL_SEC, 5 * 60),
+    maxAttempts: int(process.env.OTP_MAX_ATTEMPTS, 5),
+    resendCooldownSec: int(process.env.OTP_RESEND_COOLDOWN_SEC, 60),
+    // Phone-only accounts have no real mailbox, so they are keyed on a synthetic
+    // address at this domain. It must never be a domain that accepts mail.
+    placeholderEmailDomain: process.env.OTP_PLACEHOLDER_EMAIL_DOMAIN || "phone.invalid",
   },
 
   // ---- Reset / verification tokens ----

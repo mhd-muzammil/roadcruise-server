@@ -19,6 +19,9 @@ import { loginLimiter, sensitiveLimiter } from "../core/rateLimiter.js";
  *     POST /api/auth/logout-all               (auth) revoke all sessions (bumps tokenVersion)
  *     GET  /api/auth/sessions                 (auth) list my active sessions
  *     DELETE /api/auth/sessions/:sid          (auth) revoke one of my sessions
+ *   Phone (SMS) OTP login:
+ *     POST /api/auth/otp/request            { phone }
+ *     POST /api/auth/otp/verify             { phone, code, name? } -> tokens
  *   Recovery / verification (rate-limited):
  *     POST /api/auth/forgot-password
  *     POST /api/auth/reset-password
@@ -39,6 +42,13 @@ router.post("/logout", requireAuth, ctrl.logout);
 router.post("/logout-all", requireAuth, ctrl.logoutAll);
 router.get("/sessions", requireAuth, ctrl.listSessions);
 router.delete("/sessions/:sid", requireAuth, ctrl.revokeSession);
+
+// Phone (SMS) OTP login. sensitiveLimiter (not loginLimiter) on /request: every
+// send costs real money and lands on someone's handset, so it gets the tighter
+// per-IP budget. The per-NUMBER resend cooldown in otpStore is the other half —
+// this bounds one IP, that bounds one victim's phone.
+router.post("/otp/request", sensitiveLimiter(), ctrl.requestOtp);
+router.post("/otp/verify", loginLimiter(), ctrl.verifyOtp);
 
 // Recovery / verification
 router.post("/forgot-password", sensitiveLimiter(), ctrl.forgotPassword);

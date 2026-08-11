@@ -24,6 +24,10 @@ import {
   consumeResetToken,
   setVerificationToken,
   consumeVerificationToken,
+  normalizePhone,
+  findByPhone,
+  createFromPhone,
+  markPhoneVerified,
 } from "./userService.js";
 import {
   createSession,
@@ -35,11 +39,15 @@ import {
   revoke as revokeSessionRecord,
   revokeAllForUser,
 } from "./sessionStore.js";
+import { issueOtp, verifyOtp, resendCooldownRemaining } from "./otpStore.js";
 import { audit, AuditActions } from "./auditLog.js";
 import { notify, NotificationEvents } from "../../notifications/index.js";
 import { notifyCustomerRegistered } from "../../notifications/integration/hooks.js";
 
 const authErr = (message, code, status = 400) => Object.assign(new Error(message), { code, status });
+
+/** Last 4 digits only — enough to correlate an audit trail, useless as PII. */
+const maskPhone = (p) => (String(p || "").length <= 4 ? "****" : `******${String(p).slice(-4)}`);
 
 /**
  * Build an absolute FRONTEND link for emailed flows. The client is now a
@@ -193,6 +201,105 @@ export class AuthService {
     const { accessToken, refreshToken, session } = await this._issueSession(fresh, { provider: "local", ip, userAgent });
     await audit({ action: AuditActions.LOGIN_SUCCESS, email: fresh.email, ip, userAgent, result: "ok", detail: { sid: session.sessionId } });
     return { user: sanitize(fresh), accessToken, refreshToken, sessionId: session.sessionId };
+  }
+
+  /**
+   * Step 1 of phone login: mint an OTP and SMS it to the number.
+   *
+   * ALWAYS resolves with the same shape whether or not the number belongs to an
+   * existing account. Returning "no such user" here would turn this endpoint
+   * into a customer-database oracle for anyone with a phone-number list.
+   *
+   * No account is created at this step — an unproved number must not be able to
+   * fill the user table. Creation happens in verifyPhoneOtp(), after the code is
+   * proved.
+   *
+   * The notification carries ONLY `phone`, never `email`: the workflow routes
+   * OTP_REQUESTED to both SMS and EMAIL, and phone-only accounts hold a
+   * synthetic non-deliverable address (see createFromPhone). Omitting the email
+   * key makes the engine SKIP that channel instead of bouncing mail.
+   */
+  async requestPhoneOtp({ phone, ip, userAgent } = {}) {
+    if (!config.flags.otpLogin) throw authErr("Phone login is disabled", "DISABLED", 400);
+    const normalized = normalizePhone(phone);
+    if (!normalized) throw authErr("Enter a valid 10-digit Indian mobile number", "VALIDATION", 400);
+
+    // Cooldown is checked BEFORE issuing, so a throttled request never costs an
+    // SMS. Reported honestly: the caller knows they just asked for this number.
+    const cooldown = resendCooldownRemaining(normalized);
+    if (cooldown > 0) {
+      await audit({ action: AuditActions.OTP_THROTTLED, ip, userAgent, result: "cooldown", detail: { phone: maskPhone(normalized), cooldown } });
+      throw Object.assign(authErr(`Please wait ${cooldown}s before requesting another code`, "OTP_COOLDOWN", 429), { retryAfterSec: cooldown });
+    }
+
+    const existing = findByPhone(normalized);
+    const { code, expiresInSec } = issueOtp(normalized);
+
+    notify(
+      NotificationEvents.OTP_REQUESTED,
+      { phone: normalized, name: existing?.name || "Customer", otp: code },
+      { actor: "auth-service" }
+    );
+
+    await audit({
+      action: AuditActions.OTP_REQUESTED,
+      email: existing?.email || null,
+      ip,
+      userAgent,
+      result: "sent",
+      detail: { phone: maskPhone(normalized), newUser: !existing },
+    });
+
+    // `isNewUser` lets the UI ask for a name on the next screen. It leaks nothing
+    // an attacker could not learn by simply completing the OTP.
+    return { sent: true, expiresInSec, resendInSec: config.otpLogin.resendCooldownSec, isNewUser: !existing };
+  }
+
+  /**
+   * Step 2 of phone login: verify the code, then create or adopt the account and
+   * issue a session — the same {user, accessToken, refreshToken, sessionId}
+   * shape as authenticateLocal, so the client stores credentials identically.
+   *
+   * A correct code is proof of control of the number, so it is sufficient on its
+   * own: no password, and no email verification, is required to log in this way.
+   */
+  async verifyPhoneOtp({ phone, code, name, ip, userAgent } = {}) {
+    if (!config.flags.otpLogin) throw authErr("Phone login is disabled", "DISABLED", 400);
+    const normalized = normalizePhone(phone);
+    if (!normalized) throw authErr("Enter a valid 10-digit Indian mobile number", "VALIDATION", 400);
+    if (!code) throw authErr("Enter the code sent to your phone", "VALIDATION", 400);
+
+    const result = verifyOtp(normalized, code);
+    if (!result.ok) {
+      await audit({ action: AuditActions.OTP_FAILED, ip, userAgent, result: result.reason, detail: { phone: maskPhone(normalized) } });
+      // One message for every failure mode. Distinguishing "expired" from "wrong"
+      // from "never issued" tells an attacker which numbers are mid-login.
+      throw authErr("That code is incorrect or has expired. Request a new one.", "OTP_INVALID", 401);
+    }
+
+    const existing = findByPhone(normalized);
+    const isNew = !existing;
+    let user = existing
+      ? markPhoneVerified(existing.email, normalized) || existing
+      : createFromPhone({ phone: normalized, name });
+
+    // Configured admin addresses keep their role on this path too — otherwise a
+    // phone login would silently demote an admin to customer.
+    user = elevateIfAdmin(user.email) || user;
+
+    if (isNew) notifyCustomerRegistered(sanitize(user));
+
+    const { accessToken, refreshToken, session } = await this._issueSession(user, { provider: "phone", ip, userAgent });
+    await audit({
+      action: isNew ? AuditActions.REGISTER : AuditActions.LOGIN_SUCCESS,
+      email: user.email,
+      ip,
+      userAgent,
+      result: "ok",
+      detail: { sid: session.sessionId, provider: "phone", phone: maskPhone(normalized) },
+    });
+
+    return { user: sanitize(user), accessToken, refreshToken, sessionId: session.sessionId, isNewUser: isNew };
   }
 
   /** Register a new local user (hashed password, policy-enforced, verification email). */

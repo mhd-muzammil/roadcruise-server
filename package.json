@@ -12,7 +12,8 @@
     "test:payments": "node --test-concurrency=1 --test \"src/payments/__tests__/*.test.js\"",
     "test:auth": "node --test-concurrency=1 --test \"src/auth/__tests__/*.test.js\"",
     "dlt:templates": "node scripts/dlt-templates.mjs",
-    "msg91:templates": "node scripts/msg91-templates.mjs"
+    "msg91:templates": "node scripts/msg91-templates.mjs",
+    "otp:check": "node scripts/otp-flow.check.mjs"
   },
   "keywords": [],
   "author": "",

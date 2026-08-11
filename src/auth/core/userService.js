@@ -79,6 +79,98 @@ export function createFromGoogle(profile) {
   return user;
 }
 
+/**
+ * Normalize an Indian mobile to bare 10 digits — the canonical form used for
+ * lookups and as the OTP store key.
+ *
+ * Accepts "+91 63804 22961", "0-6380422961", "916380422961", "6380422961". The
+ * country code is STRIPPED rather than prepended: existing users were created
+ * with free-text phone values, so 10 digits is the only shape both sides can
+ * agree on. Msg91SmsProvider re-adds the country code at send time.
+ *
+ * @returns {string} 10 digits, or "" if this cannot be an Indian mobile.
+ */
+export function normalizePhone(input) {
+  const digits = String(input ?? "").replace(/\D/g, "");
+  // Strip a leading country code (91) or trunk prefix (0) before length-checking.
+  const bare =
+    digits.length > 10 && digits.startsWith("91")
+      ? digits.slice(-10)
+      : digits.length === 11 && digits.startsWith("0")
+        ? digits.slice(1)
+        : digits;
+  // Indian mobiles are 10 digits starting 6-9. Rejecting everything else here
+  // keeps landlines and typos out of the OTP store, and off the SMS bill.
+  return /^[6-9]\d{9}$/.test(bare) ? bare : "";
+}
+
+/**
+ * Find a user by mobile number, comparing NORMALIZED forms on both sides so a
+ * record stored as "+91 63804 22961" still matches a login typed as
+ * "6380422961". Returns the first match: phone is not enforced-unique on
+ * pre-existing data, and a verified OTP proves control of the number regardless.
+ */
+export function findByPhone(phone) {
+  const target = normalizePhone(phone);
+  if (!target) return null;
+  return readDb().users.find((u) => normalizePhone(u.phone) === target) || null;
+}
+
+/**
+ * Create an account provisioned by a verified phone number.
+ *
+ * Sessions, audit records and every mutate path in this module are keyed on
+ * `email`, so a phone-only user still needs one. It gets a SYNTHETIC address at
+ * config.otpLogin.placeholderEmailDomain (default "phone.invalid", reserved by
+ * RFC 2606 so it can never resolve). Two consequences worth knowing:
+ *
+ *   - `emailVerified` is false and stays false. Nothing may send mail here; the
+ *     OTP notification deliberately passes only `phone`, so the email channel is
+ *     SKIPPED rather than bounced (bounces damage sender reputation).
+ *   - `emailPlaceholder: true` marks it, so the UI can ask for a real address
+ *     later and account-linking can tell it apart from a genuine mailbox.
+ */
+export function createFromPhone({ phone, name } = {}) {
+  const normalized = normalizePhone(phone);
+  const db = readDb();
+  const now = new Date().toISOString();
+  const user = {
+    name: name || `Guest ${normalized.slice(-4)}`,
+    email: `${normalized}@${config.otpLogin.placeholderEmailDomain}`,
+    password: null, // phone-only account: no local password
+    role: "customer",
+    phone: normalized,
+    // ---- additive auth fields ----
+    provider: "phone",
+    authProvider: "phone",
+    providers: ["phone"],
+    googleId: null,
+    avatar: null,
+    emailVerified: false,
+    emailPlaceholder: true,
+    phoneVerified: true, // an OTP was proved before this record was written
+    lastLogin: now,
+    createdAt: now,
+  };
+  db.users.push(user);
+  writeDb(db);
+  return user;
+}
+
+/** Record a proved phone on an EXISTING account after a successful OTP login. */
+export function markPhoneVerified(email, phone) {
+  return mutateUser(email, (u) => {
+    const providers = new Set([...(u.providers || []), u.provider || "local", "phone"]);
+    return {
+      ...u,
+      phone: u.phone || normalizePhone(phone),
+      phoneVerified: true,
+      providers: [...providers].filter(Boolean),
+      lastLogin: new Date().toISOString(),
+    };
+  });
+}
+
 /** Link Google to an existing (email/password) account — no duplicate created. */
 export function linkGoogle(existing, profile) {
   return mutateUser(existing.email, (u) => {

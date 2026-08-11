@@ -156,3 +156,44 @@ export default {
   refresh, me, logout, logoutAll, listSessions, revokeSession,
   forgotPassword, resetPassword, verifyEmail, resendVerification,
 };
+
+/**
+ * POST /api/auth/otp/request  { phone }
+ * Mints an OTP and SMSes it. Responds identically for known and unknown
+ * numbers so the endpoint cannot be used to enumerate customers.
+ */
+export const requestOtp = async (req, res, next) => {
+  try {
+    res.json(
+      await getAuthService().requestPhoneOtp({
+        phone: req.body?.phone,
+        ip: req.ip,
+        userAgent: req.get("user-agent"),
+      })
+    );
+  } catch (err) {
+    if (err.retryAfterSec) res.set("Retry-After", String(err.retryAfterSec));
+    next(err);
+  }
+};
+
+/**
+ * POST /api/auth/otp/verify  { phone, code, name? }
+ * Proves the code, then logs in — creating the account on first use. Returns
+ * the same token shape as password login.
+ */
+export const verifyOtp = async (req, res, next) => {
+  try {
+    res.json(
+      await getAuthService().verifyPhoneOtp({
+        phone: req.body?.phone,
+        code: req.body?.code,
+        name: req.body?.name,
+        ip: req.ip,
+        userAgent: req.get("user-agent"),
+      })
+    );
+  } catch (err) {
+    next(err);
+  }
+};
