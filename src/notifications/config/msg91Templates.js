@@ -128,6 +128,26 @@ const TEMPLATES = Object.freeze({
     ]),
   }),
 
+  [NotificationEvents.OFFER_ANNOUNCED]: Object.freeze({
+    constName: "OFFER_ANNOUNCED",
+    msg91Name: "OFFER_ANNOUNCEMENT",
+    idEnv: "MSG91_OFFER_TEMPLATE_ID",
+    varsEnv: "MSG91_OFFER_VARS",
+    // NOT YET REGISTERED ANYWHERE. Unlike the other three, this one has no
+    // Airtel DLT id yet either: offers to existing customers are TRAI
+    // service-explicit traffic and need their own content template before a
+    // single message can be delivered. Operators accept unregistered content
+    // with a 200 and then DROP it, so leaving the id blank (which dead-letters
+    // loudly) is strictly better than sending into a silent hole.
+    dltTemplateId: "(not registered)",
+    defaultVars: Object.freeze([
+      Object.freeze({ name: "offerTitle", key: "offerTitle" }),
+      Object.freeze({ name: "offerDuration", key: "offerDuration" }),
+      Object.freeze({ name: "offerPrice", key: "offerPrice" }),
+      Object.freeze({ name: "supportPhone", key: "supportPhone" }),
+    ]),
+  }),
+
   [NotificationEvents.BOOKING_CONFIRMED]: Object.freeze({
     constName: "BOOKING_CONFIRMED",
     msg91Name: "BOOKING_CONFIRMATION",

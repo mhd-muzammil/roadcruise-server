@@ -14,7 +14,8 @@
     "dlt:templates": "node scripts/dlt-templates.mjs",
     "msg91:templates": "node scripts/msg91-templates.mjs",
     "otp:check": "node scripts/otp-flow.check.mjs",
-    "reminder:check": "node scripts/reminder.check.mjs"
+    "reminder:check": "node scripts/reminder.check.mjs",
+    "offer:check": "node scripts/offer.check.mjs"
   },
   "keywords": [],
   "author": "",

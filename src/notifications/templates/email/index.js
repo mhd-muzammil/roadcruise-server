@@ -348,6 +348,24 @@ export const emailTemplates = {
   // which are NOT part of defaultContext. The workflow context builder for these
   // auth flows MUST supply `otp` (OTP_REQUESTED) and `resetLink` (PASSWORD_RESET)
   // in the template context when those flows are wired up.
+  // Offer announcement. Email has no DLT involvement, so this half sends as
+  // soon as an admin publishes — the SMS half waits on template registration.
+  [NotificationEvents.OFFER_ANNOUNCED]: {
+    subject: "{{offerTitle}} — a new package from {{companyName}}",
+    html: emailLayout({
+      title: "{{offerTitle}}",
+      preheader: "{{offerTagline}}",
+      content: `
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, we have put together a new package we think you will like.</p>
+        <div style="margin:20px 0;padding:20px;background:#0f0f12;border-radius:12px;text-align:center;">
+          <div style="font-size:20px;font-weight:700;color:#d4af37;">{{offerTitle}}</div>
+          <div style="font-size:13px;color:#a1a1aa;margin-top:6px;">{{offerTagline}}</div>
+          <div style="font-size:14px;color:#e4e4e7;margin-top:12px;">{{offerDuration}} &middot; from Rs {{offerPrice}}</div>
+        </div>
+        <p style="font-size:13px;color:#71717a;">To book or ask a question, call {{supportPhone}} or reply to this email.</p>`,
+    }),
+  },
+
   [NotificationEvents.OTP_REQUESTED]: {
     subject: "Your {{companyName}} verification code",
     html: emailLayout({

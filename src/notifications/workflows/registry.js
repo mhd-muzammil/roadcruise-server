@@ -132,6 +132,9 @@ export const workflows = {
   [NotificationEvents.INVOICE_GENERATED]: base([Channels.EMAIL, Channels.WHATSAPP]),
 
   [NotificationEvents.CUSTOMER_REGISTERED]: base([Channels.EMAIL, Channels.WHATSAPP]),
+  // Email sends TODAY (no DLT involvement); SMS stays dark until the offer
+  // template id is set, and fails safe per-event rather than blocking the rest.
+  [NotificationEvents.OFFER_ANNOUNCED]: base([Channels.EMAIL, Channels.SMS]),
   [NotificationEvents.OTP_REQUESTED]: base([Channels.SMS, Channels.EMAIL]),
   [NotificationEvents.PASSWORD_RESET]: base([Channels.EMAIL]),
   [NotificationEvents.EMAIL_VERIFICATION]: base([Channels.EMAIL]),

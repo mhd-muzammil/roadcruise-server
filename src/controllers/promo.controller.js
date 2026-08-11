@@ -2,6 +2,8 @@ import {
   listPromos, getActivePromo as activePromo, insertPromo, updatePromo, deletePromo,
 } from "../db/promos.db.js";
 import { mediaType, publicUrl, removeUploadedFile } from "../uploads/index.js";
+import { announceOffer } from "../notifications/broadcast/offerBroadcast.js";
+import { notify } from "../notifications/index.js";
 
 // Bounded field sizes — the popup is a compact card, not a CMS page.
 const clip = (v, n) => (v === undefined || v === null ? undefined : String(v).slice(0, n));
@@ -104,3 +106,24 @@ export const removePromo = (req, res) => {
 };
 
 export default { getActivePromo, getPromos, createPromo, patchPromo, removePromo };
+
+/**
+ * POST /api/promos/:id/announce — tell existing customers about this package.
+ *
+ * Deliberately a SEPARATE, explicit action rather than a side effect of
+ * publishing: creating a promo shows it in the site popup, which is free and
+ * reversible, while announcing it spends money and lands on real handsets.
+ * Fusing the two would make an admin typo cost an SMS to every customer.
+ *
+ * Safe to call twice — the engine dedupes on (event, channel, recipient, promo),
+ * so a second click reaches nobody a second time.
+ */
+export const announcePromo = (req, res) => {
+  const promo = listPromos().find((p) => p.id === req.params.id);
+  if (!promo) return res.status(404).json({ error: "Promo not found" });
+  const r = announceOffer({ promo, notify });
+  res.status(202).json({
+    ...r,
+    note: "Email sends now. SMS is queued and will dead-letter until MSG91_OFFER_TEMPLATE_ID is set.",
+  });
+};

@@ -62,6 +62,14 @@ export const smsTemplates = {
     text: "{{companyName}}: Invoice {{invoiceNumber}} for booking {{bookingId}} (Rs.{{paymentAmount}}) is ready. Help: {{supportPhone}}",
   },
 
+  // Offer announcement to existing customers. THIS TEXT IS THE DLT
+  // REGISTRATION SOURCE: what gets registered must match it character for
+  // character. MSG91 renders its own approved copy (we transmit only variable
+  // VALUES), so if you change one you must change both.
+  [NotificationEvents.OFFER_ANNOUNCED]: {
+    text: "{{companyName}}: {{offerTitle}} - {{offerDuration}} from Rs {{offerPrice}}. Call {{supportPhone}} to book. Reply STOP to opt out.",
+  },
+
   // Identity / support
   [NotificationEvents.CUSTOMER_REGISTERED]: {
     text: "{{companyName}}: Welcome {{customerName}}! Your account is active. For any help call {{supportPhone}}.",

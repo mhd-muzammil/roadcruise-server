@@ -33,6 +33,11 @@ export const NotificationEvents = Object.freeze({
   // Documents
   INVOICE_GENERATED: "invoice.generated",
 
+  // Offers to EXISTING customers (TRAI service-explicit, not cold marketing).
+  // Gated on a registered DLT template like every other SMS — see
+  // broadcast/offerBroadcast.js.
+  OFFER_ANNOUNCED: "offer.announced",
+
   // Identity / support
   CUSTOMER_REGISTERED: "customer.registered",
   OTP_REQUESTED: "auth.otp_requested",
