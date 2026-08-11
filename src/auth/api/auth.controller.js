@@ -162,18 +162,13 @@ export default {
  * Mints an OTP and SMSes it. Responds identically for known and unknown
  * numbers so the endpoint cannot be used to enumerate customers.
  */
-export const requestOtp = async (req, res, next) => {
+export const requestOtp = async (req, res) => {
   try {
-    res.json(
-      await getAuthService().requestPhoneOtp({
-        phone: req.body?.phone,
-        ip: req.ip,
-        userAgent: req.get("user-agent"),
-      })
-    );
-  } catch (err) {
-    if (err.retryAfterSec) res.set("Retry-After", String(err.retryAfterSec));
-    next(err);
+    res.json(await service().requestPhoneOtp({ phone: req.body?.phone, ...reqCtx(req) }));
+  } catch (e) {
+    // Surface the cooldown so the UI can count down instead of guessing.
+    if (e.retryAfterSec) res.set("Retry-After", String(e.retryAfterSec));
+    return mapErr(res, e, "Could not send the code");
   }
 };
 
@@ -182,18 +177,17 @@ export const requestOtp = async (req, res, next) => {
  * Proves the code, then logs in — creating the account on first use. Returns
  * the same token shape as password login.
  */
-export const verifyOtp = async (req, res, next) => {
+export const verifyOtp = async (req, res) => {
   try {
     res.json(
-      await getAuthService().verifyPhoneOtp({
+      await service().verifyPhoneOtp({
         phone: req.body?.phone,
         code: req.body?.code,
         name: req.body?.name,
-        ip: req.ip,
-        userAgent: req.get("user-agent"),
+        ...reqCtx(req),
       })
     );
-  } catch (err) {
-    next(err);
+  } catch (e) {
+    return mapErr(res, e, "Could not verify that code");
   }
 };
