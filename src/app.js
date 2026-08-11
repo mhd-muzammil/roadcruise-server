@@ -10,6 +10,7 @@ import promoRoutes from "./routes/promo.routes.js";
 import placesRoutes from "./routes/places.routes.js";
 import { UPLOAD_DIR, UPLOAD_ROUTE } from "./uploads/index.js";
 import notifications from "./notifications/index.js";
+import { startTripReminderScheduler } from "./notifications/scheduler/tripReminders.js";
 import payments from "./payments/index.js";
 import authOAuth from "./auth/index.js";
 
@@ -48,6 +49,11 @@ authOAuth.init(app);
 // Enterprise Notification & Communication module (additive, non-breaking):
 // mounts /api/notifications and starts the async notification engine.
 notifications.init(app);
+
+// The daily "your trip is tomorrow" sweep. Started AFTER notifications.init so
+// the engine is running before the first tick, which fires immediately when the
+// process boots inside the evening send window.
+startTripReminderScheduler({ notify: notifications.notify });
 
 // Enterprise Payment module (additive, non-breaking): mounts /api/payments.
 // Initialized AFTER notifications so payment events can emit into the engine.
