@@ -179,14 +179,23 @@ export const requestOtp = async (req, res) => {
  */
 export const verifyOtp = async (req, res) => {
   try {
-    res.json(
-      await service().verifyPhoneOtp({
-        phone: req.body?.phone,
-        code: req.body?.code,
-        name: req.body?.name,
-        ...reqCtx(req),
-      })
-    );
+    const r = await service().verifyPhoneOtp({
+      phone: req.body?.phone,
+      code: req.body?.code,
+      name: req.body?.name,
+      ...reqCtx(req),
+    });
+    // FLATTENED to match POST /api/auth/login exactly. The frontend stores this
+    // response verbatim as `rc_user` and reads user fields off the TOP level
+    // (currentUser.name, .role); returning the service’s nested {user, ...} shape
+    // stored an object with no name and crashed the app on the next render.
+    res.json({
+      ...r.user,
+      accessToken: r.accessToken,
+      refreshToken: r.refreshToken,
+      sessionId: r.sessionId,
+      isNewUser: r.isNewUser,
+    });
   } catch (e) {
     return mapErr(res, e, "Could not verify that code");
   }
