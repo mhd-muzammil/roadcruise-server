@@ -187,6 +187,37 @@ export function linkGoogle(existing, profile) {
   });
 }
 
+/**
+ * Record or withdraw marketing consent.
+ *
+ * TWO DIFFERENT STANDARDS, deliberately stored as two fields:
+ *
+ *   marketingOptIn   affirmative, timestamped consent. TRAI service-explicit SMS
+ *                    requires this — an offer may not be texted to someone who
+ *                    merely holds an account. Absent means NO.
+ *   marketingOptOut  suppression. Email to an existing customer is legitimate
+ *                    under the business relationship, so it ships unless the
+ *                    customer says stop.
+ *
+ * Collapsing them into one boolean would either text people who never agreed, or
+ * silence email for everyone who simply never saw a checkbox.
+ *
+ * The timestamp, source and IP are the evidence half: a DLT audit asks WHEN and
+ * WHERE consent was given, and "the flag is true" is not an answer.
+ */
+export function setMarketingConsent(email, optIn, { source = "unknown", ip = null } = {}) {
+  return mutateUser(email, (u) => ({
+    ...u,
+    marketingOptIn: optIn === true,
+    // Withdrawing consent must also suppress email — a customer clicking "no"
+    // means no, not "no SMS but keep the emails".
+    marketingOptOut: optIn === true ? false : true,
+    marketingConsentAt: new Date().toISOString(),
+    marketingConsentSource: source,
+    marketingConsentIp: ip,
+  }));
+}
+
 export function touchLastLogin(email) {
   return mutateUser(email, (u) => ({ ...u, lastLogin: new Date().toISOString() }));
 }

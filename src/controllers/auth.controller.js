@@ -30,8 +30,8 @@ export const login = async (req, res) => {
 
 export const register = async (req, res) => {
   try {
-    const { name, email, phone, password } = req.body || {};
-    const r = await svc().registerLocal({ name, email, phone, password, ...ctx(req) });
+    const { name, email, phone, password, marketingOptIn } = req.body || {};
+    const r = await svc().registerLocal({ name, email, phone, password, marketingOptIn, ...ctx(req) });
     // Preserve the existing non-standard 211 success status for backward compat.
     res.status(211).json({ ...r.user, accessToken: r.accessToken, refreshToken: r.refreshToken, sessionId: r.sessionId });
   } catch (e) {

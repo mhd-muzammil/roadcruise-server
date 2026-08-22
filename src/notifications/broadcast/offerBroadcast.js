@@ -13,7 +13,7 @@ import { config as authConfig } from "../../auth/config/auth.config.js";
  * SMS half stays dark until MSG91_OFFER_TEMPLATE_ID is filled in, exactly like
  * BOOKING_CONFIRMATION. Email carries no such restriction and sends today.
  *
- * OPT-OUT is enforced here, before the message is built: `marketingOptOut` on the
+ * CONSENT IS PER CHANNEL, because the law is. SMS needs affirmative opt-in
  * user gates every channel. Regulatory consent for SMS specifically is a DLT-side
  * artifact that must exist before the template is even approved; this flag is how
  * a customer stops receiving them afterwards.
@@ -39,15 +39,18 @@ const isPlaceholderEmail = (u) =>
 export function offerAudience(users = readDb().users || []) {
   return users
     .filter((u) => String(u?.role || "customer").toLowerCase() === "customer")
-    .filter((u) => u?.marketingOptOut !== true)
     .map((u) => ({
       name: u.name,
-      // A channel with no address is SKIPPED by the engine, so passing null is
-      // safe and keeps phone-only customers in the audience — they receive the
-      // SMS as soon as the template exists.
-      phone: String(u.phone || "").trim() || null,
-      email: isPlaceholderEmail(u) ? null : u.email || null,
+      // SMS requires AFFIRMATIVE consent (TRAI service-explicit): an offer may
+      // not be texted to someone who merely holds an account. Absent means no.
+      phone: u.marketingOptIn === true ? String(u.phone || "").trim() || null : null,
+      // Email rides the existing business relationship and ships unless the
+      // customer opted out — the standard the law actually applies to it.
+      // Placeholder phone-login addresses can never receive mail.
+      email: u.marketingOptOut === true || isPlaceholderEmail(u) ? null : u.email || null,
     }))
+    // A channel with no address is SKIPPED by the engine, so a customer who is
+    // reachable on only one of the two still gets that one.
     .filter((r) => r.phone || r.email);
 }
 

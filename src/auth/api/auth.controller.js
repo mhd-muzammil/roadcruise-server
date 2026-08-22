@@ -1,7 +1,7 @@
 import { getAuthService } from "../core/AuthService.js";
 import { issueNonce, consumeNonce } from "../core/nonceStore.js";
 import { config, googleMode, publicGoogleClientId } from "../config/auth.config.js";
-import { sanitize } from "../core/userService.js";
+import { sanitize, setMarketingConsent } from "../core/userService.js";
 import { permissionsFor } from "../rbac/roles.js";
 
 const service = () => getAuthService();
@@ -199,4 +199,25 @@ export const verifyOtp = async (req, res) => {
   } catch (e) {
     return mapErr(res, e, "Could not verify that code");
   }
+};
+
+/**
+ * POST /api/auth/marketing-consent  { optIn: boolean }   (authenticated)
+ *
+ * The customer's own record of consent. Kept as its own endpoint rather than a
+ * field on profile-update so the timestamp, source and IP are always written
+ * together — DLT audits ask when and where consent was given, and a bare boolean
+ * cannot answer that.
+ */
+export const marketingConsent = async (req, res) => {
+  const optIn = req.body?.optIn === true;
+  const updated = setMarketingConsent(req.auth.user.email, optIn, {
+    source: "account-settings",
+    ip: req.ip,
+  });
+  if (!updated) return res.status(404).json({ error: "Account not found" });
+  res.json({
+    marketingOptIn: updated.marketingOptIn,
+    marketingConsentAt: updated.marketingConsentAt,
+  });
 };

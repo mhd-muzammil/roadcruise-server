@@ -28,6 +28,7 @@ import {
   findByPhone,
   createFromPhone,
   markPhoneVerified,
+  setMarketingConsent,
 } from "./userService.js";
 import {
   createSession,
@@ -263,7 +264,7 @@ export class AuthService {
    * A correct code is proof of control of the number, so it is sufficient on its
    * own: no password, and no email verification, is required to log in this way.
    */
-  async verifyPhoneOtp({ phone, code, name, ip, userAgent } = {}) {
+  async verifyPhoneOtp({ phone, code, name, marketingOptIn, ip, userAgent } = {}) {
     if (!config.flags.otpLogin) throw authErr("Phone login is disabled", "DISABLED", 400);
     const normalized = normalizePhone(phone);
     if (!normalized) throw authErr("Enter a valid 10-digit Indian mobile number", "VALIDATION", 400);
@@ -287,6 +288,11 @@ export class AuthService {
     // phone login would silently demote an admin to customer.
     user = elevateIfAdmin(user.email) || user;
 
+    if (marketingOptIn === true) {
+      setMarketingConsent(user.email, true, { source: "phone-signup", ip });
+      user = findByPhone(normalized) || user;
+    }
+
     if (isNew) notifyCustomerRegistered(sanitize(user));
 
     const { accessToken, refreshToken, session } = await this._issueSession(user, { provider: "phone", ip, userAgent });
@@ -303,7 +309,7 @@ export class AuthService {
   }
 
   /** Register a new local user (hashed password, policy-enforced, verification email). */
-  async registerLocal({ name, email, phone, password, ip, userAgent } = {}) {
+  async registerLocal({ name, email, phone, password, marketingOptIn, ip, userAgent } = {}) {
     if (!name || !email || !password) throw authErr("Name, email and password are required", "VALIDATION", 400);
     const policy = validatePassword(password);
     if (!policy.ok) throw authErr(policy.message, "WEAK_PASSWORD", 400);
@@ -312,6 +318,11 @@ export class AuthService {
     const hash = await hashPassword(password);
     const created = createLocalUser({ name, email, phone, passwordHash: hash, algo: config.passwordAlgo });
     const user = elevateIfAdmin(created.email) || created; // configured admin emails register as admin
+
+    // Record consent at the moment it was given, with its evidence. Only when the
+    // customer actually ticked the box — an untouched signup form is not consent,
+    // and writing a false record would be worse than writing none.
+    if (marketingOptIn === true) setMarketingConsent(user.email, true, { source: "signup", ip });
 
     notifyCustomerRegistered(sanitize(user));
     if (config.flags.emailVerification) await this._sendVerification(user);

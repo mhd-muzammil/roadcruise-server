@@ -40,6 +40,9 @@ router.post("/refresh", loginLimiter(), ctrl.refresh);
 router.get("/me", requireAuth, ctrl.me);
 router.post("/logout", requireAuth, ctrl.logout);
 router.post("/logout-all", requireAuth, ctrl.logoutAll);
+// Marketing consent. Authenticated: consent must be attributable to a real
+// account, not to whoever can POST a phone number.
+router.post("/marketing-consent", requireAuth, ctrl.marketingConsent);
 router.get("/sessions", requireAuth, ctrl.listSessions);
 router.delete("/sessions/:sid", requireAuth, ctrl.revokeSession);
 
