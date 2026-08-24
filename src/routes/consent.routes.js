@@ -2,6 +2,7 @@ import express from "express";
 import { requireRole } from "../auth/rbac/middleware.js";
 import { Roles } from "../auth/rbac/roles.js";
 import { consentRows, buildConsentWorkbook } from "../notifications/broadcast/consentExport.js";
+import { readDb } from "../utils/db.js";
 
 /**
  * Marketing-consent export for the Airtel DLT portal.
@@ -24,10 +25,19 @@ const router = express.Router();
 const brand = () => process.env.DLT_BRAND_NAME || process.env.COMPANY_NAME || "";
 
 router.get("/summary", requireRole(Roles.ADMIN), (_req, res) => {
-  const rows = consentRows(undefined, { brand: brand() });
-  res.json({ consented: rows.length, brand: brand() });
+  // Report the DROPPED count, not just the usable one. "0 consented" is
+  // indistinguishable between nobody opting in and everybody opting in without
+  // a mobile number on file, and those need opposite fixes.
+  const users = readDb().users || [];
+  const optedIn = users.filter((u) => u && u.marketingOptIn === true);
+  const rows = consentRows(users, { brand: brand() });
+  res.json({
+    consented: rows.length,
+    optedIn: optedIn.length,
+    droppedNoValidPhone: optedIn.length - rows.length,
+    brand: brand(),
+  });
 });
-
 router.get("/export.xlsx", requireRole(Roles.ADMIN), (_req, res) => {
   const rows = consentRows(undefined, { brand: brand() });
   const buf = buildConsentWorkbook(rows);
@@ -36,6 +46,7 @@ router.get("/export.xlsx", requireRole(Roles.ADMIN), (_req, res) => {
   // Announce the row count in a header so the admin UI can warn before someone
   // uploads an empty sheet and wonders why DLT still shows 0 Active.
   res.setHeader("X-Consent-Rows", String(rows.length));
+  res.setHeader("X-Consent-OptedIn", String((readDb().users || []).filter((u) => u && u.marketingOptIn === true).length));
   res.send(buf);
 });
 
