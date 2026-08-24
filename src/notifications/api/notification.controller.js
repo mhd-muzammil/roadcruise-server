@@ -129,4 +129,42 @@ export const resend = async (req, res) => {
   res.status(202).json({ accepted: true, eventId: envelope.eventId, event });
 };
 
-export default { list, getMetrics, deadLetters, audit, exportLogs, getOne, retry, resend };
+/**
+ * GET /api/notifications/consent-audit — why is the consent export empty?
+ *
+ * "N opted in, none uploadable" is not diagnosable from outside: the answer is
+ * in individual user records, and the customer-facing admin API is
+ * session-authenticated, so ops tooling cannot reach it. This sits behind the
+ * same NOTIF_ADMIN_TOKEN as metrics and dead-letters.
+ *
+ * Contact details are MASKED. This answers "does this account have a usable
+ * number", which is the actual question, without turning an ops endpoint into a
+ * customer-list dump.
+ */
+export const consentAudit = async (_req, res) => {
+  const { readDb } = await import("../../utils/db.js");
+  const { normalizePhone } = await import("../../auth/core/userService.js");
+  const users = readDb().users || [];
+  const mask = (v) => {
+    const s = String(v || "");
+    return s ? `${s.slice(0, 2)}***${s.slice(-2)}` : "(empty)";
+  };
+  res.json({
+    total: users.length,
+    optedIn: users.filter((u) => u?.marketingOptIn === true).length,
+    users: users.map((u) => ({
+      email: mask(u.email),
+      role: u.role || "customer",
+      provider: u.authProvider || u.provider || "?",
+      phoneRaw: mask(u.phone),
+      phoneDigits: String(u.phone || "").replace(/\D/g, "").length,
+      phoneUsable: !!normalizePhone(u.phone),
+      marketingOptIn: u.marketingOptIn === true,
+      marketingOptOut: u.marketingOptOut === true,
+      consentAt: u.marketingConsentAt || null,
+      consentSource: u.marketingConsentSource || null,
+    })),
+  });
+};
+
+export default { consentAudit, list, getMetrics, deadLetters, audit, exportLogs, getOne, retry, resend };

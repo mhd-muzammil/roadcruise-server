@@ -21,6 +21,8 @@ router.use(adminGuard);
 
 router.get("/", ctrl.list);
 router.get("/metrics", ctrl.getMetrics);
+// Diagnostic: why the DLT consent export is empty. Masked contact details.
+router.get("/consent-audit", ctrl.consentAudit);
 router.get("/dead-letters", ctrl.deadLetters);
 router.get("/audit", ctrl.audit);
 router.get("/export", ctrl.exportLogs);
