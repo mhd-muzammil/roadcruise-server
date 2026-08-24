@@ -1,7 +1,7 @@
 import { getAuthService } from "../core/AuthService.js";
 import { issueNonce, consumeNonce } from "../core/nonceStore.js";
 import { config, googleMode, publicGoogleClientId } from "../config/auth.config.js";
-import { sanitize, setMarketingConsent } from "../core/userService.js";
+import { sanitize, setMarketingConsent, attachPhoneIfMissing, normalizePhone } from "../core/userService.js";
 import { permissionsFor } from "../rbac/roles.js";
 
 const service = () => getAuthService();
@@ -211,13 +211,27 @@ export const verifyOtp = async (req, res) => {
  */
 export const marketingConsent = async (req, res) => {
   const optIn = req.body?.optIn === true;
-  const updated = setMarketingConsent(req.auth.user.email, optIn, {
-    source: "account-settings",
-    ip: req.ip,
-  });
+  const email = req.auth.user.email;
+
+  // Opting IN without a number on file produces consent DLT can never see, so
+  // it is refused rather than stored as a comfortable lie. Opting OUT never
+  // needs a number.
+  if (optIn) {
+    if (req.body?.phone) attachPhoneIfMissing(email, req.body.phone);
+    const { findByEmail } = await import("../core/userService.js");
+    if (!normalizePhone(findByEmail(email)?.phone)) {
+      return res.status(400).json({
+        error: "Add your 10-digit mobile number to receive offers by SMS.",
+        code: "PHONE_REQUIRED",
+      });
+    }
+  }
+
+  const updated = setMarketingConsent(email, optIn, { source: "account-settings", ip: req.ip });
   if (!updated) return res.status(404).json({ error: "Account not found" });
   res.json({
     marketingOptIn: updated.marketingOptIn,
     marketingConsentAt: updated.marketingConsentAt,
+    phone: updated.phone || null,
   });
 };

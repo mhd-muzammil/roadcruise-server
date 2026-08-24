@@ -75,3 +75,5 @@ src/config/db.json
 src/config/db.json.migrated.bak
 # scratch data dir written by `npm run otp:check` (isolated from dev data)
 .tmp-otp-check/
+
+.tmp-cp/

@@ -17,7 +17,8 @@
     "reminder:check": "node scripts/reminder.check.mjs",
     "offer:check": "node scripts/offer.check.mjs",
     "consent:check": "node scripts/consent.check.mjs",
-    "consent:export:check": "node scripts/consent-export.check.mjs"
+    "consent:export:check": "node scripts/consent-export.check.mjs",
+    "consent:phone:check": "node scripts/consent-phone.check.mjs"
   },
   "keywords": [],
   "author": "",

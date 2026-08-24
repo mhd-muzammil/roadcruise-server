@@ -205,6 +205,22 @@ export function linkGoogle(existing, profile) {
  * The timestamp, source and IP are the evidence half: a DLT audit asks WHEN and
  * WHERE consent was given, and "the flag is true" is not an answer.
  */
+/**
+ * Store a mobile number on an account that has none.
+ *
+ * Consent is only useful to DLT if it is attached to a number, and customers
+ * who signed up by email or Google have none — they can consent today and be
+ * permanently unuploadable, while the UI tells them they are subscribed.
+ *
+ * Never OVERWRITES an existing valid number: that is the one bookings and trip
+ * reminders already go to, and silently repointing it from a marketing form
+ * would redirect operational messages too.
+ */
+export function attachPhoneIfMissing(email, phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return null;
+  return mutateUser(email, (u) => (normalizePhone(u.phone) ? u : { ...u, phone: normalized }));
+}
 export function setMarketingConsent(email, optIn, { source = "unknown", ip = null } = {}) {
   return mutateUser(email, (u) => ({
     ...u,
