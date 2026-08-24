@@ -17,7 +17,11 @@ import authOAuth from "./auth/index.js";
 
 const app = express();
 
-app.use(cors());
+// Custom response headers are invisible to cross-origin JavaScript unless they
+// are named here — the client on roadcruise.in reads these from api.roadcruise.in.
+// Without this the consent download reported 0 rows for a file that had rows,
+// and told the admin their customers had no phone numbers.
+app.use(cors({ exposedHeaders: ["X-Consent-Rows", "X-Consent-OptedIn"] }));
 // Capture the raw request body alongside normal JSON parsing. Existing routes
 // are unaffected (they still receive parsed req.body); the payment webhook uses
 // req.rawBody for HMAC signature verification. Additive, non-breaking.
