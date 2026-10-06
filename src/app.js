@@ -7,6 +7,7 @@ import reviewRoutes from "./routes/review.routes.js";
 import vehicleRoutes from "./routes/vehicle.routes.js";
 import galleryRoutes from "./routes/gallery.routes.js";
 import promoRoutes from "./routes/promo.routes.js";
+import packageRoutes from "./routes/package.routes.js";
 import consentRoutes from "./routes/consent.routes.js";
 import placesRoutes from "./routes/places.routes.js";
 import { UPLOAD_DIR, UPLOAD_ROUTE } from "./uploads/index.js";
@@ -41,6 +42,7 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/promos", promoRoutes);
+app.use("/api/packages", packageRoutes);
 app.use("/api/consent", consentRoutes);
 app.use("/api/places", placesRoutes);
 

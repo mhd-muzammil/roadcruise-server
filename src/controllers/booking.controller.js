@@ -22,6 +22,8 @@ import { config as paymentConfig } from "../payments/config/payment.config.js";
 import { getPaymentRepository } from "../payments/repository/PaymentRepository.js";
 import notifConfig from "../notifications/config/notification.config.js";
 import { isVehicleAvailable } from "../services/availability.js";
+import { getPackage } from "../db/packages.db.js";
+import { buildTableWorkbook } from "../notifications/broadcast/consentExport.js";
 
 // Customer-facing booking reference in the RDZ### shape (RDZ001, RDZ002, …).
 // Sequential: continue from the highest existing RDZ number so references never
@@ -67,6 +69,8 @@ export const createBooking = async (req, res) => {
     // Trip-planner extras: paymentPlan "advance" pays a 20% deposit online (the
     // balance goes to the driver); distance/duration come from the route quote.
     paymentPlan, distanceKm, durationMin,
+    // Admin-managed package being booked (decides the allowed payment mode).
+    packageId,
   } = req.body || {};
 
   if (!fromDate || !toDate || !item) {
@@ -86,15 +90,32 @@ export const createBooking = async (req, res) => {
     return res.status(409).json({ error: "This vehicle is already booked — please choose another." });
   }
 
+  // A package's admin-chosen payment mode overrides whatever the client sent:
+  //   offline -> never charged online; online -> always paid in full online;
+  //   partial -> always the package's advance percentage online.
+  const pkg = packageId ? getPackage(packageId) : null;
+  if (packageId && !pkg) return res.status(404).json({ error: "This package is no longer available." });
+  let reqMode = paymentMode;
+  let reqPlan = paymentPlan;
+  let advanceRate = ADVANCE_RATE;
+  if (pkg) {
+    if (pkg.paymentMode === "offline") reqMode = "arrival";
+    else if (pkg.paymentMode === "online") { reqMode = "online"; reqPlan = "full"; }
+    else { reqMode = "online"; reqPlan = "advance"; advanceRate = pkg.advancePercent / 100; }
+  }
+
   const paymentsEnabled = paymentConfig.enabled;
-  const wantsOnline = (paymentMode || "online") !== "arrival";
+  const wantsOnline = (reqMode || "online") !== "arrival";
   const online = wantsOnline && paymentsEnabled;
 
   // Advance (partial) payment: the deposit is computed HERE, never taken from
   // the client, so a tampered request can't shrink what gets charged. The
   // payment module charges advanceAmount when > 0, else the full fare.
-  const plan = online && paymentPlan === "advance" ? "advance" : "full";
-  const advanceAmount = plan === "advance" ? Math.max(1, Math.round(amount * ADVANCE_RATE)) : 0;
+  const plan = online && reqPlan === "advance" ? "advance" : "full";
+  const advanceAmount = plan === "advance" ? Math.max(1, Math.round(amount * advanceRate)) : 0;
+  const defaultMethod = online
+    ? (plan === "advance" ? `Online (${Math.round(advanceRate * 100)}% advance)` : "Online")
+    : "Pay on arrival";
 
   const posInt = (v) => {
     const n = Number(v);
@@ -120,8 +141,8 @@ export const createBooking = async (req, res) => {
     distanceKm: posInt(distanceKm),
     durationMin: posInt(durationMin),
     status: online ? "PendingPayment" : "Pending",
-    paymentMethod:
-      paymentMethod || (online ? (plan === "advance" ? "Online (20% advance)" : "Online") : "Pay on arrival"),
+    // Package bookings: the label always reflects the admin-set mode.
+    paymentMethod: pkg ? defaultMethod : paymentMethod || defaultMethod,
     driver: "None",
     // Context-specific details (persisted so both customer + admin notifications,
     // including the post-payment ones emitted by the payment module, can show
@@ -474,3 +495,43 @@ function renderInvoiceHtml(booking, payment) {
 </body>
 </html>`;
 }
+
+// Cells starting with = + - @ are executed as formulas by Excel; customer-typed
+// fields (name, notes, locations) are untrusted, so neutralise them.
+const safeCell = (v) => {
+  if (typeof v === "number") return v;
+  const s = String(v ?? "");
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+};
+
+const EXPORT_COLUMNS = [
+  "Booking Ref", "Created At", "Status", "Customer Name", "Phone", "Email",
+  "Booking Type", "Item / Package", "Trip Type", "Vehicle", "Pickup", "Drop",
+  "From Date", "To Date", "Pickup Time", "Passengers",
+  "Fare (INR)", "Advance (INR)", "Balance (INR)", "Payment Method", "Driver", "Notes",
+];
+
+/**
+ * GET /api/bookings/export.xlsx  (admin only)
+ * Every booking as an Excel workbook, newest first.
+ */
+export const exportBookings = (_req, res) => {
+  const rows = [...listBookings()]
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .map((b) => {
+      const fare = Number(b.fare) || 0;
+      const adv = Number(b.advanceAmount) || 0;
+      return [
+        b.id, b.createdAt, b.status, b.name, b.phone, b.customerEmail,
+        b.category, b.packageName || b.item, b.tripType, b.vehicle, b.pickup, b.drop,
+        b.fromDate, b.toDate, b.pickupTime, b.passengers,
+        fare, adv, adv ? fare - adv : 0, b.paymentMethod, b.driver === "None" ? "" : b.driver, b.notes,
+      ].map(safeCell);
+    });
+  const buf = buildTableWorkbook("Bookings", EXPORT_COLUMNS, rows);
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="roadcruise-bookings-${stamp}.xlsx"`);
+  res.setHeader("X-Export-Rows", String(rows.length));
+  res.send(buf);
+};

@@ -1,7 +1,7 @@
 import express from "express";
 import {
   getBookings, createBooking, cancelBooking, modifyBooking, getBookingInvoice,
-  updateBooking, deleteBooking,
+  updateBooking, deleteBooking, exportBookings,
 } from "../controllers/booking.controller.js";
 import { requireAuth, requireRole } from "../auth/rbac/middleware.js";
 import { Roles } from "../auth/rbac/roles.js";
@@ -17,6 +17,7 @@ const router = express.Router();
 //                         (customer edits own trip details; staff+ edits any)
 //   GET  /:id/invoice  -> any signed-in user; controller enforces ownership
 //   PATCH/DELETE /:id  -> admin only (manage/cancel/delete a booking)
+router.get("/export.xlsx", requireRole(Roles.ADMIN), exportBookings);
 router.get("/", requireAuth, getBookings);
 router.post("/", requireAuth, createBooking);
 router.patch("/:id/cancel", requireAuth, cancelBooking);

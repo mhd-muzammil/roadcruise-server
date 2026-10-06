@@ -141,18 +141,38 @@ const NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const NS_PKGREL = "http://schemas.openxmlformats.org/package/2006/relationships";
 
+/** Spreadsheet column letter for a 0-based index (0 -> A, 26 -> AA). */
+const colLetter = (i) => {
+  let s = "";
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  return s;
+};
+
 /** Render consent rows as an Airtel-shaped .xlsx buffer. */
 export function buildConsentWorkbook(rows) {
-  const cols = ["A", "B", "C", "D", "E"];
-  const cell = (col, n, value) =>
-    '<c r="' + col + n + '" t="inlineStr"><is><t>' + esc(value) + "</t></is></c>";
+  return buildTableWorkbook(
+    "Consent",
+    CONSENT_COLUMNS,
+    rows.map((r) => [r.phone, r.date, r.brand, r.mode, r.language])
+  );
+}
 
-  const header = '<row r="1">' + CONSENT_COLUMNS.map((h, i) => cell(cols[i], 1, h)).join("") + "</row>";
-  const body = rows
-    .map((r, i) => {
+/**
+ * Render any flat table (header row + value rows) as an .xlsx buffer. Numbers
+ * are written as real numeric cells so Excel can sum/sort them; everything else
+ * is an inline string.
+ */
+export function buildTableWorkbook(sheetName, headers, valueRows) {
+  const cell = (col, n, value) =>
+    typeof value === "number" && Number.isFinite(value)
+      ? '<c r="' + col + n + '"><v>' + value + "</v></c>"
+      : '<c r="' + col + n + '" t="inlineStr"><is><t>' + esc(value) + "</t></is></c>";
+
+  const header = '<row r="1">' + headers.map((h, i) => cell(colLetter(i), 1, h)).join("") + "</row>";
+  const body = valueRows
+    .map((vals, i) => {
       const n = i + 2;
-      const vals = [r.phone, r.date, r.brand, r.mode, r.language];
-      return '<row r="' + n + '">' + vals.map((v, j) => cell(cols[j], n, v)).join("") + "</row>";
+      return '<row r="' + n + '">' + vals.map((v, j) => cell(colLetter(j), n, v)).join("") + "</row>";
     })
     .join("");
 
@@ -181,7 +201,7 @@ export function buildConsentWorkbook(rows) {
       data:
         XMLDECL +
         '<workbook xmlns="' + NS_MAIN + '" xmlns:r="' + NS_REL + '">' +
-        '<sheets><sheet name="Consent" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        '<sheets><sheet name="' + esc(sheetName) + '" sheetId="1" r:id="rId1"/></sheets></workbook>',
     },
     {
       name: "xl/_rels/workbook.xml.rels",
@@ -201,4 +221,4 @@ export function buildConsentWorkbook(rows) {
   ]);
 }
 
-export default { consentRows, buildConsentWorkbook, toDltDate, CONSENT_COLUMNS };
+export default { consentRows, buildConsentWorkbook, buildTableWorkbook, toDltDate, CONSENT_COLUMNS };
