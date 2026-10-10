@@ -49,6 +49,12 @@ export function getActivePromo() {
   return row ? toPublic(row) : null;
 }
 
+/** Every ACTIVE promo, newest first (the homepage "What's New" offers list). */
+export function listActivePromos(limit = 20) {
+  const db = ensure();
+  return db.prepare("SELECT * FROM promos WHERE active = 1 ORDER BY rowid DESC LIMIT ?").all(limit).map(toPublic);
+}
+
 /** Insert one promo. Returns the stored promo. */
 export function insertPromo({ title, tagline, duration, price, highlights, imageUrl, active }) {
   const db = ensure();
@@ -101,4 +107,4 @@ export function deletePromo(id) {
   return toPublic(row);
 }
 
-export default { listPromos, getActivePromo, insertPromo, updatePromo, deletePromo };
+export default { listPromos, getActivePromo, listActivePromos, insertPromo, updatePromo, deletePromo };

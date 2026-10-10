@@ -1,5 +1,8 @@
 import { NotificationEvents, Channels } from "../config/events.js";
 import config from "../config/notification.config.js";
+import {
+  formatINR, pricingOf, stopLabels, bookingRoute, rentalLabel, distanceLabel, balanceDue,
+} from "../../services/bookingView.js";
 
 const ALL = [Channels.EMAIL, Channels.SMS, Channels.WHATSAPP];
 
@@ -59,7 +62,10 @@ export function defaultContext(payload = {}) {
     drop: payload.drop || payload.to || "—",
     vehicle: payload.vehicle || payload.item || "—",
     driver: payload.driver && payload.driver !== "None" ? payload.driver : "To be assigned",
+    // Raw value: it is also an MSG91/DLT SMS variable, whose approved format
+    // must not change. Email/WhatsApp print the grouped paymentAmountText.
     paymentAmount: payload.paymentAmount ?? payload.fare ?? "—",
+    paymentAmountText: amountText(payload.paymentAmount ?? payload.fare),
     paymentStatus: payload.paymentStatus || payload.status || "—",
     invoiceNumber: payload.invoiceNumber || "—",
     // ---- additive: context-specific booking details (vehicle / package forms).
@@ -69,10 +75,51 @@ export function defaultContext(payload = {}) {
     passengers: payload.passengers || "",
     pickupTime: payload.pickupTime || "",
     specialRequests: payload.notes || payload.specialRequests || "",
+    // ---- additive: full trip + price breakdown for booking events. Empty
+    // strings when absent, so rows render only for bookings that carry them.
+    ...bookingDetails(payload),
     // ---- additive: auth flows (password reset / email verification / OTP) ----
     resetLink: payload.resetLink || "",
     verificationLink: payload.verificationLink || "",
     otp: payload.otp || "",
+  };
+}
+
+const amountText = (v) =>
+  v === undefined || v === null || v === "" || !Number.isFinite(Number(v)) ? (v ?? "—") : formatINR(v);
+
+const STATUS_TEXT = {
+  Approved: "Confirmed",
+  PendingPayment: "Awaiting payment",
+  Pending: "Pending confirmation",
+  Cancelled: "Cancelled",
+  Completed: "Completed",
+};
+
+/** Route, rental, distance and amounts for a booking payload (else blanks). */
+function bookingDetails(payload = {}) {
+  if (!payload.fromDate && !payload.pricing && payload.fare == null) {
+    return {
+      route: "", stops: "", rentalDuration: "", distance: "", baseAmount: "", gstLabel: "",
+      gstAmount: "", totalAmount: "", advancePaid: "", balanceDue: "", bookingStatus: "",
+    };
+  }
+  const p = pricingOf(payload);
+  const hasGst = p.gstAmount != null;
+  const stops = stopLabels(payload);
+  const adv = Number(payload.advanceAmount) || 0;
+  return {
+    route: bookingRoute(payload).join(" → "),
+    stops: stops.join(" → "),
+    rentalDuration: rentalLabel(payload),
+    distance: distanceLabel(payload),
+    baseAmount: hasGst ? formatINR(p.subtotal) : "",
+    gstLabel: hasGst ? `GST (${p.gstRate}%)` : "",
+    gstAmount: hasGst ? formatINR(p.gstAmount) : "",
+    totalAmount: formatINR(p.total),
+    advancePaid: adv ? formatINR(adv) : "",
+    balanceDue: adv ? formatINR(balanceDue(payload)) : "",
+    bookingStatus: STATUS_TEXT[payload.status] || payload.status || "",
   };
 }
 

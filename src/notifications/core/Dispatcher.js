@@ -47,7 +47,10 @@ export class Dispatcher {
     const startedAt = Date.now();
 
     try {
-      const { def } = resolveTemplate(record.channel, record.event);
+      const { def: templateDef } = resolveTemplate(record.channel, record.event);
+      // Context-aware templates are functions of the context; resolve once so
+      // their buttons/media reach the provider like a static template's.
+      const def = typeof templateDef === "function" ? templateDef(record.payload) : templateDef;
       const rendered = render(def, record.channel, record.payload);
       const provider = getProvider(record.channel);
 
@@ -58,7 +61,7 @@ export class Dispatcher {
       // that don't need them simply ignore the extra fields.
       const dltVars =
         record.channel === Channels.SMS
-          ? buildVars(typeof def === "function" ? def(record.payload)?.text : def.text, record.payload)
+          ? buildVars(def.text, record.payload)
           : undefined;
 
       const result = await provider.send({

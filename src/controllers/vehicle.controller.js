@@ -7,12 +7,7 @@ import {
 } from "../db/vehicles.db.js";
 import { getBookingById, patchBooking } from "../utils/db.js";
 import { mediaType, publicUrl, removeUploadedFile } from "../uploads/index.js";
-import {
-  heldCounts,
-  heldBookingsFor,
-  withAvailability,
-  listVehiclesWithAvailability,
-} from "../services/availability.js";
+import { heldCounts, heldBookingsFor, withAvailability } from "../services/availability.js";
 
 /**
  * Vehicle inventory + availability. The availability model itself lives in
@@ -22,21 +17,29 @@ import {
 
 // ---- Public ----------------------------------------------------------------
 
-/** GET /api/vehicles — public list with availability. */
+// Customers are never shown or blocked by unit availability — the business can
+// always arrange a vehicle — so the public view reports every active vehicle
+// as available. Held-unit counts stay admin-only (GET /admin).
+const publicVehicle = (v) => {
+  const { heldCount: _held, ...rest } = withAvailability(v, {});
+  return { ...rest, available: true };
+};
+
+/** GET /api/vehicles — public list of active vehicles. */
 export const getVehicles = (_req, res) => {
   try {
-    res.json(listVehiclesWithAvailability());
+    res.json(listVehicles().map(publicVehicle));
   } catch (e) {
     console.error("[vehicles] list failed:", e.message);
     res.status(500).json({ error: "Could not load vehicles." });
   }
 };
 
-/** GET /api/vehicles/:id — public single vehicle with availability. */
+/** GET /api/vehicles/:id — public single vehicle. */
 export const getVehicleById = (req, res) => {
   const v = getVehicle(req.params.id);
   if (!v) return res.status(404).json({ error: "Vehicle not found" });
-  res.json(withAvailability(v));
+  res.json(publicVehicle(v));
 };
 
 // ---- Admin -----------------------------------------------------------------

@@ -3,7 +3,7 @@ import { requireRole } from "../auth/rbac/middleware.js";
 import { Roles } from "../auth/rbac/roles.js";
 import { upload } from "../uploads/index.js";
 import {
-  getActivePromo, getPromos, createPromo, patchPromo, removePromo, announcePromo,
+  getActivePromo, getOffers, getPromos, createPromo, patchPromo, removePromo, announcePromo,
 } from "../controllers/promo.controller.js";
 
 const router = express.Router();
@@ -16,6 +16,7 @@ const router = express.Router();
 //   DELETE /:id    -> remove promo + image (admin)
 //   POST   /:id/announce -> email/SMS the offer to existing customers (admin)
 router.get("/active", getActivePromo);
+router.get("/offers", getOffers);
 router.get("/", requireRole(Roles.ADMIN), getPromos);
 router.post("/", requireRole(Roles.ADMIN), upload.single("image"), createPromo);
 router.patch("/:id", requireRole(Roles.ADMIN), upload.single("image"), patchPromo);

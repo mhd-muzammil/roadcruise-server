@@ -13,6 +13,34 @@ const has = (v) => v != null && v !== "" && v !== "—";
 const row = (cond, label, value) => (cond ? detailRow(label, value) : "");
 
 /**
+ * The full trip, shared by every booking email so customer and admin messages
+ * always agree: vehicle, trip type, pickup, stops, drop, dates, time, rental
+ * duration and distance. Each row appears only when the booking carries it.
+ */
+const tripRows = (ctx) =>
+  row(has(ctx.packageName), "Package", "{{packageName}}") +
+  detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Vehicle", "{{vehicle}}") +
+  detailRow("Trip Type", "{{tripType}}") +
+  row(has(ctx.pickup), "Pickup", "{{pickup}}") +
+  row(has(ctx.stops), "Additional Stops", "{{stops}}") +
+  row(has(ctx.drop), "Drop", "{{drop}}") +
+  detailRow("Trip Dates", "{{tripDate}}") +
+  row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
+  row(has(ctx.rentalDuration), "Rental Duration", "{{rentalDuration}}") +
+  row(has(ctx.distance), "Distance (est.)", "{{distance}}") +
+  row(has(ctx.passengers), "Passengers", "{{passengers}}") +
+  row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}");
+
+/** Base amount, GST and total (+ advance split), then the booking status. */
+const priceRows = (ctx) =>
+  row(has(ctx.baseAmount), "Base Amount", "{{baseAmount}}") +
+  row(has(ctx.gstLabel), "{{gstLabel}}", "{{gstAmount}}") +
+  row(has(ctx.totalAmount), "Total Amount", "{{totalAmount}}") +
+  row(has(ctx.advancePaid), "Advance (online)", "{{advancePaid}}") +
+  row(has(ctx.balanceDue), "Balance to Driver", "{{balanceDue}}") +
+  row(has(ctx.bookingStatus), "Booking Status", "{{bookingStatus}}");
+
+/**
  * EMAIL template library: eventKey -> { subject, html }.
  *
  * Key flows (booking + payment) are implemented here as the reference standard.
@@ -44,46 +72,31 @@ export const emailTemplates = {
       preheader: "Your booking request is in.",
       content: `
         <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, thanks for choosing {{companyName}}. We've received your booking and it is being processed.</p>
-        ${detailTable(
-          detailRow("Booking ID", "{{bookingId}}") +
-            row(has(ctx.packageName), "Package", "{{packageName}}") +
-            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
-            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
-            row(has(ctx.drop), "Drop", "{{drop}}") +
-            detailRow("Trip Dates", "{{tripDate}}") +
-            detailRow("Trip Type", "{{tripType}}") +
-            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
-            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
-            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}")
-        )}
-        <p style="font-size:13px;color:#71717a;">You'll get a confirmation once payment is verified.</p>`,
+        ${detailTable(detailRow("Booking ID", "{{bookingId}}") + tripRows(ctx) + priceRows(ctx))}
+        <p style="font-size:13px;color:#71717a;">Our team will confirm your booking shortly. You can view it any time under My Bookings at {{websiteUrl}}.</p>`,
     }),
   }),
 
-  [NotificationEvents.BOOKING_CONFIRMED]: {
+  [NotificationEvents.BOOKING_CONFIRMED]: (ctx) => ({
     subject: "Booking Confirmed ✓ {{bookingId}} — {{companyName}}",
     html: emailLayout({
       title: "Your Booking is Confirmed",
       preheader: "All set! Your trip is confirmed.",
       content: `
-        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, your payment has been received and your booking is <strong>confirmed</strong>. Your trip details are below.</p>
+        <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, your booking is <strong>confirmed</strong>. Your trip details are below.</p>
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
-            detailRow("Vehicle", "{{vehicle}}") +
-            detailRow("Pickup", "{{pickup}}") +
-            detailRow("Drop", "{{drop}}") +
-            detailRow("Trip Dates", "{{tripDate}}") +
-            detailRow("Trip Type", "{{tripType}}") +
+            tripRows(ctx) +
             detailRow("Driver", "{{driver}}") +
-            detailRow("Amount Paid", "₹{{paymentAmount}}")
+            priceRows(ctx)
         )}
         <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Our team at {{companyName}} will contact you <strong>as soon as possible</strong> to finalize your pickup and driver details.</p>
         <p style="font-size:13px;color:#71717a;">For anything urgent, call us at {{supportPhone}} or email {{supportEmail}}.</p>`,
     }),
-  },
+  }),
 
   [NotificationEvents.PAYMENT_SUCCESSFUL]: {
-    subject: "Payment Received ₹{{paymentAmount}} — {{companyName}}",
+    subject: "Payment Received {{paymentAmountText}} — {{companyName}}",
     html: emailLayout({
       title: "Payment Successful",
       preheader: "We've received your payment.",
@@ -92,7 +105,7 @@ export const emailTemplates = {
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Invoice No.", "{{invoiceNumber}}") +
-            detailRow("Amount Paid", "₹{{paymentAmount}}") +
+            detailRow("Amount Paid", "{{paymentAmountText}}") +
             detailRow("Status", "{{paymentStatus}}")
         )}
         <p style="font-size:13px;color:#71717a;">Your invoice and receipt are attached where supported.</p>`,
@@ -108,7 +121,7 @@ export const emailTemplates = {
         <p style="font-size:14px;line-height:1.6;color:#3f3f46;">Hi {{customerName}}, unfortunately your payment for booking {{bookingId}} could not be processed. Please retry or contact support.</p>
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
-            detailRow("Amount", "₹{{paymentAmount}}") +
+            detailRow("Amount", "{{paymentAmountText}}") +
             detailRow("Status", "{{paymentStatus}}")
         )}`,
     }),
@@ -161,7 +174,7 @@ export const emailTemplates = {
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Invoice No.", "{{invoiceNumber}}") +
-            detailRow("Amount Due", "₹{{paymentAmount}}") +
+            detailRow("Amount Due", "{{paymentAmountText}}") +
             detailRow("Status", "{{paymentStatus}}")
         )}
         <p style="font-size:13px;color:#71717a;">You can pay online at {{websiteUrl}} or contact {{supportPhone}} for assistance.</p>`,
@@ -178,7 +191,7 @@ export const emailTemplates = {
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Invoice No.", "{{invoiceNumber}}") +
-            detailRow("Refund Amount", "₹{{paymentAmount}}") +
+            detailRow("Refund Amount", "{{paymentAmountText}}") +
             detailRow("Status", "{{paymentStatus}}")
         )}
         <p style="font-size:13px;color:#71717a;">We'll notify you again once the refund is complete.</p>`,
@@ -186,7 +199,7 @@ export const emailTemplates = {
   },
 
   [NotificationEvents.REFUND_COMPLETED]: {
-    subject: "Refund Completed — ₹{{paymentAmount}} — {{companyName}}",
+    subject: "Refund Completed — {{paymentAmountText}} — {{companyName}}",
     html: emailLayout({
       title: "Your Refund is Complete",
       preheader: "Your refund has been processed successfully.",
@@ -195,7 +208,7 @@ export const emailTemplates = {
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Invoice No.", "{{invoiceNumber}}") +
-            detailRow("Refund Amount", "₹{{paymentAmount}}") +
+            detailRow("Refund Amount", "{{paymentAmountText}}") +
             detailRow("Status", "{{paymentStatus}}")
         )}
         <p style="font-size:13px;color:#71717a;">If you don't see the amount within a few business days, please contact {{supportEmail}}.</p>`,
@@ -273,7 +286,7 @@ export const emailTemplates = {
             detailRow("Drop", "{{drop}}") +
             detailRow("Vehicle", "{{vehicle}}") +
             detailRow("Driver", "{{driver}}") +
-            detailRow("Fare", "₹{{paymentAmount}}")
+            detailRow("Fare", "{{paymentAmountText}}")
         )}
         <p style="font-size:13px;color:#71717a;">We'd love your feedback. Visit {{websiteUrl}} to share your experience.</p>`,
     }),
@@ -315,7 +328,7 @@ export const emailTemplates = {
     }),
   },
 
-  [NotificationEvents.INVOICE_GENERATED]: {
+  [NotificationEvents.INVOICE_GENERATED]: (ctx) => ({
     subject: "Invoice {{invoiceNumber}} for {{bookingId}} — {{companyName}}",
     html: emailLayout({
       title: "Your Invoice is Ready",
@@ -325,12 +338,14 @@ export const emailTemplates = {
         ${detailTable(
           detailRow("Invoice No.", "{{invoiceNumber}}") +
             detailRow("Booking ID", "{{bookingId}}") +
-            detailRow("Amount", "₹{{paymentAmount}}") +
-            detailRow("Status", "{{paymentStatus}}")
+            tripRows(ctx) +
+            priceRows(ctx) +
+            detailRow("Amount Paid", "{{paymentAmountText}}") +
+            detailRow("Payment Status", "{{paymentStatus}}")
         )}
-        <p style="font-size:13px;color:#71717a;">The full invoice is attached where supported. You can also view it at {{websiteUrl}}.</p>`,
+        <p style="font-size:13px;color:#71717a;">Download the full invoice any time from My Bookings at {{websiteUrl}}.</p>`,
     }),
-  },
+  }),
 
   [NotificationEvents.CUSTOMER_REGISTERED]: {
     subject: "Welcome to {{companyName}}, {{customerName}}!",
@@ -408,16 +423,9 @@ export const emailTemplates = {
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Customer", "{{customerName}}") +
             detailRow("Phone", "{{customerPhone}}") +
-            row(has(ctx.packageName), "Package", "{{packageName}}") +
-            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
-            detailRow("Trip Dates", "{{tripDate}}") +
-            detailRow("Trip Type", "{{tripType}}") +
-            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
-            row(has(ctx.drop), "Drop", "{{drop}}") +
-            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
-            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
-            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}") +
-            detailRow("Fare to Collect", "₹{{paymentAmount}}")
+            tripRows(ctx) +
+            priceRows(ctx) +
+            detailRow("Fare to Collect", "{{paymentAmountText}}")
         )}
         <p style="font-size:13px;color:#71717a;">☎️ Call the customer at {{customerPhone}} to confirm and arrange payment.</p>`,
     }),
@@ -440,7 +448,7 @@ export const emailTemplates = {
             detailRow("Trip Type", "{{tripType}}") +
             row(has(ctx.pickup), "Pickup", "{{pickup}}") +
             row(has(ctx.drop), "Drop", "{{drop}}") +
-            detailRow("Fare", "₹{{paymentAmount}}")
+            detailRow("Fare", "{{paymentAmountText}}")
         )}
         <p style="font-size:13px;color:#71717a;">☎️ Reach the customer at {{customerPhone}} if you need to follow up.</p>`,
     }),
@@ -457,16 +465,8 @@ export const emailTemplates = {
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Customer", "{{customerName}}") +
             detailRow("Phone", "{{customerPhone}}") +
-            row(has(ctx.packageName), "Package", "{{packageName}}") +
-            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
-            detailRow("New Trip Dates", "{{tripDate}}") +
-            detailRow("Trip Type", "{{tripType}}") +
-            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
-            row(has(ctx.drop), "Drop", "{{drop}}") +
-            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
-            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
-            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}") +
-            detailRow("Fare", "₹{{paymentAmount}}")
+            tripRows(ctx) +
+            priceRows(ctx)
         )}
         <p style="font-size:13px;color:#71717a;">☎️ Reach the customer at {{customerPhone}} if the new schedule needs discussion.</p>`,
     }),
@@ -483,16 +483,9 @@ export const emailTemplates = {
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Customer", "{{customerName}}") +
             detailRow("Phone", "{{customerPhone}}") +
-            row(has(ctx.packageName), "Package", "{{packageName}}") +
-            detailRow(has(ctx.packageName) ? "Vehicle Preference" : "Service / Vehicle", "{{vehicle}}") +
-            detailRow("Trip Dates", "{{tripDate}}") +
-            detailRow("Trip Type", "{{tripType}}") +
-            row(has(ctx.pickup), "Pickup", "{{pickup}}") +
-            row(has(ctx.drop), "Drop", "{{drop}}") +
-            row(has(ctx.passengers), "Passengers", "{{passengers}}") +
-            row(has(ctx.pickupTime), "Pickup Time", "{{pickupTime}}") +
-            row(has(ctx.specialRequests), "Special Requests", "{{specialRequests}}") +
-            detailRow("Amount Paid", "₹{{paymentAmount}}") +
+            tripRows(ctx) +
+            priceRows(ctx) +
+            detailRow("Amount Paid", "{{paymentAmountText}}") +
             detailRow("Invoice No.", "{{invoiceNumber}}") +
             detailRow("Status", "{{paymentStatus}}")
         )}

@@ -8,27 +8,54 @@ import { NotificationEvents } from "../../config/events.js";
  * and SMS-grade providers ignore them gracefully. Key flows implemented; the
  * whatsapp-templates agent extends with remaining events + rich content.
  */
+const has = (v) => v != null && v !== "" && v !== "—";
+
+/** Trip lines shared by the booking messages — each only when present. */
+const tripLines = (ctx) =>
+  [
+    "",
+    "🚗 {{vehicle}}",
+    "🧭 {{tripType}}",
+    has(ctx.route) ? "📍 {{route}}" : "",
+    "📅 {{tripDate}}",
+    has(ctx.pickupTime) ? "🕒 Pickup: {{pickupTime}}" : "",
+    has(ctx.rentalDuration) ? "⏱️ Duration: {{rentalDuration}}" : "",
+    has(ctx.distance) ? "🛣️ Distance: {{distance}}" : "",
+  ]
+    .filter((l, i) => i === 0 || l)
+    .join("\n");
+
+/** Base, GST, total and status lines (blank for legacy bookings without them). */
+const priceLines = (ctx) =>
+  [
+    has(ctx.baseAmount) ? "Base: {{baseAmount}}" : "",
+    has(ctx.gstLabel) ? "{{gstLabel}}: {{gstAmount}}" : "",
+    has(ctx.totalAmount) ? "💰 *Total: {{totalAmount}}*" : "",
+    has(ctx.bookingStatus) ? "Status: {{bookingStatus}}" : "",
+  ]
+    .filter(Boolean)
+    .map((l) => `\n${l}`)
+    .join("");
+
 export const whatsappTemplates = {
-  [NotificationEvents.BOOKING_CREATED]: {
-    text:
-      "*{{companyName}}*\nHi {{customerName}}, we've received booking *{{bookingId}}*.\n\n🚗 {{vehicle}}\n📅 {{tripDate}}\n🧭 {{tripType}}\n\nWe'll confirm shortly.",
+  [NotificationEvents.BOOKING_CREATED]: (ctx) => ({
+    text: `*{{companyName}}*\nHi {{customerName}}, we've received booking *{{bookingId}}*.\n${tripLines(ctx)}\n${priceLines(ctx)}\n\nWe'll confirm shortly.`,
     buttons: [{ type: "url", text: "View Booking", url: "{{websiteUrl}}" }],
-  },
-  [NotificationEvents.BOOKING_CONFIRMED]: {
-    text:
-      "*{{companyName}}* ✅\nBooking *{{bookingId}}* is CONFIRMED!\n\n🚗 {{vehicle}}\n📍 {{pickup}} → {{drop}}\n📅 {{tripDate}}\n👨‍✈️ Driver: {{driver}}\n💰 Fare: ₹{{paymentAmount}}",
+  }),
+  [NotificationEvents.BOOKING_CONFIRMED]: (ctx) => ({
+    text: `*{{companyName}}* ✅\nBooking *{{bookingId}}* is CONFIRMED!\n${tripLines(ctx)}\n👨‍✈️ Driver: {{driver}}\n${priceLines(ctx)}`,
     buttons: [
       { type: "url", text: "Track Trip", url: "{{websiteUrl}}" },
       { type: "phone", text: "Call Support", phone: "{{supportPhone}}" },
     ],
-  },
+  }),
   [NotificationEvents.PAYMENT_SUCCESSFUL]: {
     text:
-      "*{{companyName}}*\n💳 Payment of *₹{{paymentAmount}}* received for {{bookingId}}.\nInvoice: {{invoiceNumber}}\nStatus: {{paymentStatus}}\n\nReceipt attached.",
+      "*{{companyName}}*\n💳 Payment of *{{paymentAmountText}}* received for {{bookingId}}.\nInvoice: {{invoiceNumber}}\nStatus: {{paymentStatus}}\n\nReceipt attached.",
   },
   [NotificationEvents.PAYMENT_FAILED]: {
     text:
-      "*{{companyName}}*\n⚠️ Payment for *{{bookingId}}* failed.\nAmount: ₹{{paymentAmount}}\nPlease retry or contact {{supportPhone}}.",
+      "*{{companyName}}*\n⚠️ Payment for *{{bookingId}}* failed.\nAmount: {{paymentAmountText}}\nPlease retry or contact {{supportPhone}}.",
     buttons: [{ type: "url", text: "Retry Payment", url: "{{websiteUrl}}" }],
   },
   [NotificationEvents.BOOKING_CANCELLED]: {
@@ -46,7 +73,7 @@ export const whatsappTemplates = {
   },
   [NotificationEvents.PAYMENT_PENDING]: {
     text:
-      "*{{companyName}}* ⏳\nPayment for booking *{{bookingId}}* is PENDING.\n\n💰 Amount: ₹{{paymentAmount}}\nStatus: {{paymentStatus}}\n\nPlease complete your payment to confirm your trip.",
+      "*{{companyName}}* ⏳\nPayment for booking *{{bookingId}}* is PENDING.\n\n💰 Amount: {{paymentAmountText}}\nStatus: {{paymentStatus}}\n\nPlease complete your payment to confirm your trip.",
     buttons: [
       { type: "url", text: "Pay Now", url: "{{websiteUrl}}" },
       { type: "phone", text: "Call Support", phone: "{{supportPhone}}" },
@@ -54,12 +81,12 @@ export const whatsappTemplates = {
   },
   [NotificationEvents.REFUND_INITIATED]: {
     text:
-      "*{{companyName}}* 💸\nHi {{customerName}}, a refund of *₹{{paymentAmount}}* for booking *{{bookingId}}* has been INITIATED.\n\nInvoice: {{invoiceNumber}}\nStatus: {{paymentStatus}}\n\nIt should reflect in your account within 5-7 business days.",
+      "*{{companyName}}* 💸\nHi {{customerName}}, a refund of *{{paymentAmountText}}* for booking *{{bookingId}}* has been INITIATED.\n\nInvoice: {{invoiceNumber}}\nStatus: {{paymentStatus}}\n\nIt should reflect in your account within 5-7 business days.",
     buttons: [{ type: "phone", text: "Call Support", phone: "{{supportPhone}}" }],
   },
   [NotificationEvents.REFUND_COMPLETED]: {
     text:
-      "*{{companyName}}* ✅\nGood news {{customerName}}! Your refund of *₹{{paymentAmount}}* for booking *{{bookingId}}* is COMPLETE.\n\nInvoice: {{invoiceNumber}}\nStatus: {{paymentStatus}}\n\nThank you for choosing us.",
+      "*{{companyName}}* ✅\nGood news {{customerName}}! Your refund of *{{paymentAmountText}}* for booking *{{bookingId}}* is COMPLETE.\n\nInvoice: {{invoiceNumber}}\nStatus: {{paymentStatus}}\n\nThank you for choosing us.",
     buttons: [{ type: "url", text: "Book Again", url: "{{websiteUrl}}" }],
   },
   [NotificationEvents.TRIP_SCHEDULED]: {
@@ -82,7 +109,7 @@ export const whatsappTemplates = {
   },
   [NotificationEvents.TRIP_COMPLETED]: {
     text:
-      "*{{companyName}}* 🏁\nYour trip *{{bookingId}}* is COMPLETE.\n\n📍 {{pickup}} → {{drop}}\n📅 {{tripDate}}\n💰 Fare: ₹{{paymentAmount}}\n\nThank you for travelling with us, {{customerName}}! We'd love your feedback. ⭐",
+      "*{{companyName}}* 🏁\nYour trip *{{bookingId}}* is COMPLETE.\n\n📍 {{pickup}} → {{drop}}\n📅 {{tripDate}}\n💰 Fare: {{paymentAmountText}}\n\nThank you for travelling with us, {{customerName}}! We'd love your feedback. ⭐",
     buttons: [
       { type: "url", text: "Rate Your Trip", url: "{{websiteUrl}}" },
       { type: "url", text: "Book Again", url: "{{websiteUrl}}" },
@@ -103,7 +130,7 @@ export const whatsappTemplates = {
   },
   [NotificationEvents.INVOICE_GENERATED]: {
     text:
-      "*{{companyName}}* 🧾\nInvoice *{{invoiceNumber}}* has been generated for booking *{{bookingId}}*.\n\n💰 Amount: ₹{{paymentAmount}}\nStatus: {{paymentStatus}}\n\nYour invoice is attached.",
+      "*{{companyName}}* 🧾\nInvoice *{{invoiceNumber}}* has been generated for booking *{{bookingId}}*.\n\n💰 Amount: {{paymentAmountText}}\nStatus: {{paymentStatus}}\n\nYour invoice is attached.",
     buttons: [{ type: "url", text: "Download Invoice", url: "{{websiteUrl}}" }],
   },
   [NotificationEvents.CUSTOMER_REGISTERED]: {
@@ -127,18 +154,16 @@ export const whatsappTemplates = {
   // Function form so package/pickup lines only appear when the booking has them.
   [NotificationEvents.ADMIN_BOOKING_PAID]: (ctx) => {
     const pkg = ctx.packageName ? `\n📦 ${ctx.packageName}` : "";
-    const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
     return {
       text:
-        `*{{companyName}}* — 💰 NEW PAID BOOKING\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💳 Paid: ₹{{paymentAmount}} (Invoice {{invoiceNumber}})\n\nPayment received online — trip confirmed.`,
+        `*{{companyName}}* — 💰 NEW PAID BOOKING\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}${tripLines(ctx)}\n${priceLines(ctx)}\n💳 Paid: {{paymentAmountText}} (Invoice {{invoiceNumber}})\n\nPayment received online — trip confirmed.`,
     };
   },
   [NotificationEvents.ADMIN_BOOKING_UNPAID]: (ctx) => {
     const pkg = ctx.packageName ? `\n📦 ${ctx.packageName}` : "";
-    const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
     return {
       text:
-        `*{{companyName}}* — 🆕 NEW BOOKING (UNPAID)\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\n☎️ Please contact the customer to confirm and collect payment.`,
+        `*{{companyName}}* — 🆕 NEW BOOKING (UNPAID)\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}${tripLines(ctx)}\n${priceLines(ctx)}\n💵 Fare to collect: {{paymentAmountText}}\n\n☎️ Please contact the customer to confirm and collect payment.`,
     };
   },
   [NotificationEvents.ADMIN_BOOKING_CANCELLED]: (ctx) => {
@@ -146,7 +171,7 @@ export const whatsappTemplates = {
     const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
     return {
       text:
-        `*{{companyName}}* — ❌ BOOKING CANCELLED\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\nThe vehicle unit is free again. Process any refund separately.`,
+        `*{{companyName}}* — ❌ BOOKING CANCELLED\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 {{tripDate}}\n💵 Fare: {{paymentAmountText}}\n\nThe vehicle unit is free again. Process any refund separately.`,
     };
   },
   [NotificationEvents.ADMIN_BOOKING_MODIFIED]: (ctx) => {
@@ -154,7 +179,7 @@ export const whatsappTemplates = {
     const route = ctx.pickup && ctx.pickup !== "—" ? `\n📍 {{pickup}}${ctx.drop && ctx.drop !== "—" ? " → {{drop}}" : ""}` : "";
     return {
       text:
-        `*{{companyName}}* — ✏️ BOOKING MODIFIED\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 New dates: {{tripDate}}\n💵 Fare: ₹{{paymentAmount}}\n\nThe customer changed their trip — re-check the schedule and driver.`,
+        `*{{companyName}}* — ✏️ BOOKING MODIFIED\n\n👤 {{customerName}}\n📞 {{customerPhone}}\n🆔 {{bookingId}}${pkg}\n🚗 {{vehicle}}${route}\n📅 New dates: {{tripDate}}\n💵 Fare: {{paymentAmountText}}\n\nThe customer changed their trip — re-check the schedule and driver.`,
     };
   },
   generic: {

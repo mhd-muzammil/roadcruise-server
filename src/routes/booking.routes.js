@@ -1,15 +1,17 @@
 import express from "express";
 import {
-  getBookings, createBooking, cancelBooking, modifyBooking, getBookingInvoice,
+  getBookings, createBooking, quoteTrip, cancelBooking, modifyBooking, getBookingInvoice,
   updateBooking, deleteBooking, exportBookings,
 } from "../controllers/booking.controller.js";
 import { requireAuth, requireRole } from "../auth/rbac/middleware.js";
 import { Roles } from "../auth/rbac/roles.js";
+import { rateLimit } from "../auth/core/rateLimiter.js";
 
 const router = express.Router();
 
 // SECURITY: bookings are no longer open to the public.
 //   GET  /             -> any signed-in user (admins see all; customers see own)
+//   POST /quote        -> public: server-priced quotes for a trip search
 //   POST /             -> any signed-in user (must be logged in to book)
 //   PATCH /:id/cancel  -> any signed-in user; controller enforces ownership
 //                         (customer cancels own; staff+ cancels any)
@@ -18,6 +20,7 @@ const router = express.Router();
 //   GET  /:id/invoice  -> any signed-in user; controller enforces ownership
 //   PATCH/DELETE /:id  -> admin only (manage/cancel/delete a booking)
 router.get("/export.xlsx", requireRole(Roles.ADMIN), exportBookings);
+router.post("/quote", rateLimit({ windowMs: 60 * 1000, max: 60, name: "booking-quote" }), quoteTrip);
 router.get("/", requireAuth, getBookings);
 router.post("/", requireAuth, createBooking);
 router.patch("/:id/cancel", requireAuth, cancelBooking);

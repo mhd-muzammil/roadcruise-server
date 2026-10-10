@@ -108,3 +108,16 @@ test("delete removes the promo from the admin list and the popup", () => {
   removePromo({ params: { id: promo.id } }, again);
   assert.equal(again.statusCode, 404);
 });
+
+test("offers list: every ACTIVE promo, newest first; hidden ones excluded", async () => {
+  const { getOffers } = await import("../promo.controller.js");
+  const { insertPromo } = await import("../../db/promos.db.js");
+  const a = insertPromo({ title: "Offer A", active: true });
+  const b = insertPromo({ title: "Offer B", active: true });
+  const hidden = insertPromo({ title: "Offer Hidden", active: false });
+  let body;
+  getOffers({}, { json: (j) => { body = j; }, status() { return this; } });
+  const ids = body.map((p) => p.id);
+  assert.ok(ids.indexOf(b.id) < ids.indexOf(a.id), "newest first");
+  assert.ok(!ids.includes(hidden.id), "inactive promos are not public");
+});

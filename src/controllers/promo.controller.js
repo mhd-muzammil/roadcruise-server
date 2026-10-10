@@ -1,5 +1,5 @@
 import {
-  listPromos, getActivePromo as activePromo, insertPromo, updatePromo, deletePromo,
+  listPromos, getActivePromo as activePromo, listActivePromos, insertPromo, updatePromo, deletePromo,
 } from "../db/promos.db.js";
 import { mediaType, publicUrl, removeUploadedFile } from "../uploads/index.js";
 import { announceOffer } from "../notifications/broadcast/offerBroadcast.js";
@@ -41,6 +41,16 @@ export const getActivePromo = (_req, res) => {
   } catch (e) {
     console.error("[promos] active failed:", e.message);
     res.status(500).json({ error: "Could not load promotions." });
+  }
+};
+
+/** GET /api/promos/offers — every active promo, newest first (homepage offers list). */
+export const getOffers = (_req, res) => {
+  try {
+    res.json(listActivePromos());
+  } catch (e) {
+    console.error("[promos] offers failed:", e.message);
+    res.status(500).json({ error: "Could not load offers." });
   }
 };
 
@@ -105,7 +115,7 @@ export const removePromo = (req, res) => {
   res.json({ message: "Promotion deleted", id: req.params.id });
 };
 
-export default { getActivePromo, getPromos, createPromo, patchPromo, removePromo };
+export default { getActivePromo, getOffers, getPromos, createPromo, patchPromo, removePromo };
 
 /**
  * POST /api/promos/:id/announce — tell existing customers about this package.

@@ -55,6 +55,13 @@ export const config = {
     supportEmail: process.env.SUPPORT_EMAIL || "info@roadcruise.in",
     websiteUrl: process.env.COMPANY_URL || "https://roadcruise.in",
     logoUrl: process.env.COMPANY_LOGO_URL || "",
+    // Invoice header details: registered legal entity, GSTIN and registered
+    // address (each overridable by env).
+    legalName: process.env.COMPANY_LEGAL_NAME || "KVVC ROAD CRUISE INDIA PRIVATE LIMITED",
+    gstin: process.env.COMPANY_GSTIN || "33AALCK3303L1ZL",
+    address:
+      process.env.COMPANY_ADDRESS ||
+      "205, Arunthathipuram, Veeraraghavapuram, Ikkadu, Kakkalur, Tiruvallur, Tamil Nadu 602021",
   },
 
   // Admin API protection. In production a token is REQUIRED.

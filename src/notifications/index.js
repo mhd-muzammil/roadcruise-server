@@ -159,7 +159,13 @@ function init(app) {
  * the event envelope. This is THE function business modules call.
  */
 function notify(event, payload = {}, meta = {}) {
-  return eventBus.emitEvent(event, payload, meta);
+  // Never let a notification problem fail the business action that emitted it.
+  try {
+    return eventBus.emitEvent(event, payload, meta);
+  } catch (err) {
+    console.error(`[notifications] could not emit ${event}:`, err?.message || err);
+    return null;
+  }
 }
 
 export {
