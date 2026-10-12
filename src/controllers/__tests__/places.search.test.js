@@ -1,7 +1,8 @@
-// Real tests for the dual-source place search (GET /api/places/search): Photon
-// and Nominatim are queried in parallel, merged, deduped and capped. The
-// controller is exercised for real — only the NETWORK boundary (global fetch)
-// is stubbed, since unit tests must not depend on third-party uptime.
+// Real tests for the place search (GET /api/places/search): Ola Maps answers
+// when OLA_MAPS_API_KEY is set, otherwise Photon and Nominatim are queried in
+// parallel, merged, deduped and capped. The controller is exercised for real —
+// only the NETWORK boundary (global fetch) is stubbed, since unit tests must
+// not depend on third-party uptime.
 //
 // Run: npm run test:bookings   (same isolated suite; no DB needed here)
 import { test, beforeEach, afterEach } from "node:test";
@@ -50,32 +51,61 @@ const nominatimPayload = (...names) =>
     address: { village: name, state: "Tamil Nadu", postcode: "600100" },
   }));
 
-// Route the stubbed fetch by upstream host. `null` payload = simulated outage.
+/** Ola autocomplete payload. Each place: { name, description, types?, lat?, lng? }. */
+const olaPayload = (...places) => ({
+  predictions: places.map((p, i) => ({
+    place_id: `ola_place_${i}`,
+    description: p.description,
+    structured_formatting: { main_text: p.name, secondary_text: p.description },
+    // Ola's autocomplete carries coordinates inline, so no Place Details call
+    // is needed to quote a fare.
+    geometry:
+      p.geometry === null
+        ? undefined
+        : { location: { lat: p.lat ?? 12.89 + i * 0.01, lng: p.lng ?? 80.06 + i * 0.01 } },
+    types: p.types || ["locality", "political"],
+  })),
+});
+
+// Route the stubbed fetch by upstream host. `null` payload = simulated outage;
+// a `{ __status }` payload = an HTTP error response (e.g. a rejected API key).
 // `taggedResult` answers the extra osm_tag-filtered Photon call that a typed
 // category ("… railway station") triggers.
-let photonResult, nominatimResult, taggedResult;
+let photonResult, nominatimResult, taggedResult, olaResult;
 let fetchCalls;
 const realFetch = global.fetch;
+const realOlaKey = process.env.OLA_MAPS_API_KEY;
 
 beforeEach(() => {
   fetchCalls = [];
   taggedResult = { features: [] };
-  global.fetch = async (url) => {
+  olaResult = { predictions: [] };
+  // Default every test to the keyless OSM path, whatever the developer happens
+  // to have in their local .env — the Ola tests below opt in explicitly.
+  delete process.env.OLA_MAPS_API_KEY;
+  global.fetch = async (url, opts) => {
     const href = String(url);
     fetchCalls.push(href);
     // Route by HOSTNAME — the search term also appears in the query string, so
     // a substring check on the whole URL would misroute (e.g. q="photon-down").
     const host = new URL(href).hostname;
-    const payload = host.includes("komoot")
-      ? (href.includes("osm_tag=") ? taggedResult : photonResult)
-      : nominatimResult;
+    const payload = host.includes("olamaps")
+      ? olaResult
+      : host.includes("komoot")
+        ? (href.includes("osm_tag=") ? taggedResult : photonResult)
+        : nominatimResult;
     if (payload === null) throw new Error("simulated upstream outage");
-    return { ok: true, json: async () => payload };
+    if (payload?.__status) {
+      return { ok: false, status: payload.__status, text: async () => payload.__body || "" };
+    }
+    return { ok: true, json: async () => payload, headers: opts?.headers };
   };
 });
 
 afterEach(() => {
   global.fetch = realFetch;
+  if (realOlaKey === undefined) delete process.env.OLA_MAPS_API_KEY;
+  else process.env.OLA_MAPS_API_KEY = realOlaKey;
 });
 
 // The controller keeps a 1h in-process cache keyed by the query — every test
@@ -316,7 +346,125 @@ test("genuine duplicates (same name, kind and place) still collapse", async () =
   assert.equal(res.body.length, 1, "identical places are still deduped");
 });
 
-// ---- 11. Blending: Nominatim is actually represented ------------------------
+// ---- 11. Ola Maps is the primary source when a key is configured ------------
+// The regression that motivated this: OSM tags Mannivakkam with pincode 603211
+// (India Post says 600048) and carries none of its POIs, and Photon+Nominatim
+// repeat that identically because they share one OSM extract.
+
+test("with a key set, Ola answers alone — the OSM pair is never queried", async () => {
+  process.env.OLA_MAPS_API_KEY = "test-key";
+  olaResult = olaPayload(
+    {
+      name: "Mannivakkam Bus Stop",
+      description: "Mannivakkam Bus Stop, Varadharajapuram, Tamil Nadu 600048, India",
+      types: ["bus_station", "point_of_interest", "establishment"],
+    },
+    { name: "Mannivakkam", description: "Mannivakkam, Tamil Nadu 600048, India" }
+  );
+  photonResult = photonPayload("SHOULD NOT APPEAR");
+  nominatimResult = nominatimPayload("SHOULD NOT APPEAR EITHER");
+
+  const res = mockRes();
+  await searchPlaces(reqFor("ola-primary-test"), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(fetchCalls.length, 1, "only Ola is called — no OSM fallback");
+  assert.ok(fetchCalls[0].includes("api.olamaps.io"));
+  assert.ok(fetchCalls[0].includes("api_key=test-key"), "the key is sent server-side");
+  assert.ok(fetchCalls[0].includes("location=13.0827%2C80.2707") || fetchCalls[0].includes("location=13.0827,80.2707"),
+    "results are biased to Chennai");
+
+  assert.equal(res.body.length, 2);
+  assert.equal(res.body[0].name, "Mannivakkam Bus Stop");
+  assert.equal(res.body[0].kind, "Bus Station", "the distinguishing type wins over point_of_interest");
+  assert.equal(
+    res.body[0].label,
+    "Mannivakkam Bus Stop, Varadharajapuram, Tamil Nadu 600048",
+    "Ola's own formatted address is used verbatim, minus the country"
+  );
+  assert.equal(res.body[0].source, "olamaps", "the client attributes the dataset that answered");
+  assert.ok(res.body.every((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon)),
+    "autocomplete alone yields coordinates — no Place Details call needed");
+});
+
+test("a plain locality gets no kind badge", async () => {
+  process.env.OLA_MAPS_API_KEY = "test-key";
+  olaResult = olaPayload({
+    name: "Mannivakkam",
+    description: "Mannivakkam, Tamil Nadu 600048, India",
+    types: ["sublocality", "political", "geocode"],
+  });
+
+  const res = mockRes();
+  await searchPlaces(reqFor("ola-plain-kind-test"), res);
+  assert.equal(res.body[0].kind, "", "administrative types never render as a badge");
+});
+
+test("Ola failure (rejected key) falls back to the OSM pair", async () => {
+  process.env.OLA_MAPS_API_KEY = "bad-key";
+  olaResult = { __status: 401, __body: '{"message":"Unauthorized"}' };
+  photonResult = photonPayload("Kelambakkam");
+  nominatimResult = nominatimPayload("Kelambakkam Bypass");
+
+  const res = mockRes();
+  await searchPlaces(reqFor("ola-401-test"), res);
+
+  assert.equal(res.statusCode, 200, "a bad key must never break search for customers");
+  assert.equal(fetchCalls.length, 3, "Ola tried once, then both OSM sources");
+  assert.deepEqual(res.body.map((s) => s.name), ["Kelambakkam", "Kelambakkam Bypass"]);
+  assert.equal(res.body[0].source, "osm");
+});
+
+test("Ola knowing nothing falls back to Photon's typo tolerance", async () => {
+  process.env.OLA_MAPS_API_KEY = "test-key";
+  olaResult = { predictions: [] };
+  photonResult = photonPayload("Chengalpattu");
+  nominatimResult = [];
+
+  const res = mockRes();
+  await searchPlaces(reqFor("chengalpatu-typo-test"), res);
+
+  assert.equal(res.body.length, 1);
+  assert.equal(res.body[0].name, "Chengalpattu");
+});
+
+test("predictions without coordinates are unusable → fall back rather than quote a null fare", async () => {
+  process.env.OLA_MAPS_API_KEY = "test-key";
+  olaResult = olaPayload({ name: "Nowhere", description: "Nowhere, Tamil Nadu, India", geometry: null });
+  photonResult = photonPayload("Guduvancheri");
+  nominatimResult = [];
+
+  const res = mockRes();
+  await searchPlaces(reqFor("ola-no-geometry-test"), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.ok(!res.body.some((s) => s.name === "Nowhere"), "a coordinate-less prediction is never offered");
+  assert.equal(res.body[0].name, "Guduvancheri");
+});
+
+test("an Ola answer is cached — a repeat query issues no new request", async () => {
+  process.env.OLA_MAPS_API_KEY = "test-key";
+  olaResult = olaPayload({ name: "Tambaram", description: "Tambaram, Tamil Nadu 600045, India" });
+
+  await searchPlaces(reqFor("ola-cache-test"), mockRes());
+  assert.equal(fetchCalls.length, 1);
+
+  const res = mockRes();
+  await searchPlaces(reqFor("ola-cache-test"), res);
+  assert.equal(fetchCalls.length, 1, "served from cache — this is what keeps us in the free tier");
+  assert.equal(res.body[0].name, "Tambaram");
+});
+
+test("with no key configured, Ola is never called at all", async () => {
+  photonResult = photonPayload("Pallavaram");
+  nominatimResult = [];
+
+  await searchPlaces(reqFor("ola-unset-test"), mockRes());
+  assert.ok(!fetchCalls.some((u) => u.includes("olamaps")), "no key => no Ola request");
+  assert.equal(fetchCalls.length, 2);
+});
+
+// ---- 12. Blending: Nominatim is actually represented ------------------------
 
 test("Nominatim results are blended in, not buried behind a full Photon list", async () => {
   photonResult = photonPayload("P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8");
