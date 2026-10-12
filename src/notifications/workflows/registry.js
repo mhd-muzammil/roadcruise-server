@@ -62,6 +62,9 @@ export function defaultContext(payload = {}) {
     drop: payload.drop || payload.to || "—",
     vehicle: payload.vehicle || payload.item || "—",
     driver: payload.driver && payload.driver !== "None" ? payload.driver : "To be assigned",
+    // Admin-entered cab + driver details (see bookings PATCH `assignment`).
+    driverPhone: payload.assignment?.driverPhone || "—",
+    cabNumber: payload.assignment?.cabNumber || "—",
     // Raw value: it is also an MSG91/DLT SMS variable, whose approved format
     // must not change. Email/WhatsApp print the grouped paymentAmountText.
     paymentAmount: payload.paymentAmount ?? payload.fare ?? "—",

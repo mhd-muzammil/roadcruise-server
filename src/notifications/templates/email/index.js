@@ -302,6 +302,8 @@ export const emailTemplates = {
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("Driver", "{{driver}}") +
+            detailRow("Driver Phone", "{{driverPhone}}") +
+            detailRow("Cab No.", "{{cabNumber}}") +
             detailRow("Vehicle", "{{vehicle}}") +
             detailRow("Trip Dates", "{{tripDate}}") +
             detailRow("Pickup", "{{pickup}}")
@@ -320,6 +322,8 @@ export const emailTemplates = {
         ${detailTable(
           detailRow("Booking ID", "{{bookingId}}") +
             detailRow("New Driver", "{{driver}}") +
+            detailRow("Driver Phone", "{{driverPhone}}") +
+            detailRow("Cab No.", "{{cabNumber}}") +
             detailRow("Vehicle", "{{vehicle}}") +
             detailRow("Trip Dates", "{{tripDate}}") +
             detailRow("Pickup", "{{pickup}}")

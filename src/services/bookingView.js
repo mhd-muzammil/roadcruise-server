@@ -63,4 +63,8 @@ export const balanceDue = (booking = {}) => {
   return adv ? round2((Number(booking.fare) || 0) - adv) : 0;
 };
 
-export default { formatINR, pricingOf, stopLabels, bookingRoute, rentalLabel, distanceLabel, balanceDue };
+/** Booked fare plus any post-trip charges (= the final invoice total). */
+export const finalTotal = (booking = {}) =>
+  round2((Number(pricingOf(booking).total || booking.fare) || 0) + (Number(booking.tripClosure?.total) || 0));
+
+export default { formatINR, pricingOf, stopLabels, bookingRoute, rentalLabel, distanceLabel, balanceDue, finalTotal };

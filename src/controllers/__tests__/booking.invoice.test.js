@@ -72,7 +72,7 @@ test("owner gets a self-contained HTML invoice with the booking's details", () =
   assert.match(res.headers["Content-Type"], /text\/html/, "served as HTML");
   assert.match(
     res.headers["Content-Disposition"],
-    new RegExp(`RoadCruise-Invoice-${id}\\.html`),
+    new RegExp(`RoadCruise-Pre-Invoice-${id}\\.html`),
     "download filename carries the booking ref"
   );
 

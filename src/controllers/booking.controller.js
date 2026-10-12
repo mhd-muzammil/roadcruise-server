@@ -25,11 +25,12 @@ import { getPackage } from "../db/packages.db.js";
 import { getVehicle, listVehicles } from "../db/vehicles.db.js";
 import { buildTableWorkbook } from "../notifications/broadcast/consentExport.js";
 import {
-  TRIP_TYPES, GST_RATE_PERCENT, quotePackage, quoteVehicleIndicative, quoteEstimate,
+  TRIP_TYPES, GST_RATE_PERCENT, STOP_TRIP_TYPES, MAX_STOPS,
+  quotePackage, quoteVehicleIndicative, quoteEstimate, quoteTripClosure,
 } from "../services/pricing.js";
 import { normalizeTrip, daysForTrip, routeForTrip, quoteTripVehicle } from "../services/tripQuote.js";
 import {
-  formatINR, pricingOf, stopLabels, rentalLabel, distanceLabel, balanceDue,
+  formatINR, pricingOf, stopLabels, rentalLabel, distanceLabel, balanceDue, finalTotal,
 } from "../services/bookingView.js";
 
 // Customer-facing booking reference in the RDZ### shape (RDZ001, RDZ002, …).
@@ -289,13 +290,34 @@ export const createBooking = async (req, res) => {
 
 /**
  * PATCH /api/bookings/:id  (admin only)
- * Update status / assign a driver. Emits lifecycle notifications only on a real
- * transition. Payment-success notifications are owned by the payment module, so
- * an admin "Approved" here just confirms the booking (e.g. a pay-on-arrival one).
+ * Update status / assign the cab + driver. Emits lifecycle notifications only on
+ * a real transition. Payment-success notifications are owned by the payment
+ * module, so an admin "Approved" here just confirms the booking (e.g. a
+ * pay-on-arrival one).
+ *
+ * `assignment` = { cabNumber, vehicleType, driverName, driverPhone, paymentMode }
+ * is what the customer sees on My Bookings. `driver` mirrors driverName so the
+ * notification templates ({{driver}}) keep working unchanged. `assignment: null`
+ * unassigns.
  */
+const ASSIGNMENT_FIELDS = { cabNumber: 20, vehicleType: 60, driverName: 80, driverPhone: 20, paymentMode: 40 };
+
+function cleanAssignment(raw) {
+  if (!raw || typeof raw !== "object") return { error: "Invalid assignment" };
+  const out = {};
+  for (const [k, max] of Object.entries(ASSIGNMENT_FIELDS)) out[k] = String(raw[k] ?? "").trim().slice(0, max);
+  out.cabNumber = out.cabNumber.toUpperCase();
+  if (!out.driverName) return { error: "Driver name is required" };
+  if (!out.cabNumber) return { error: "Cab number is required" };
+  if (out.driverPhone && !/^\+?[0-9\s-]{10,15}$/.test(out.driverPhone)) {
+    return { error: "Enter a valid driver phone number" };
+  }
+  return { assignment: out };
+}
+
 export const updateBooking = (req, res) => {
   const { id } = req.params;
-  const { status, driver } = req.body || {};
+  const { status, driver, assignment } = req.body || {};
 
   const existing = getBookingById(id);
   if (!existing) return res.status(404).json({ error: "Booking not found" });
@@ -303,6 +325,15 @@ export const updateBooking = (req, res) => {
   const patch = {};
   if (status !== undefined) patch.status = status;
   if (driver !== undefined) patch.driver = driver;
+  if (assignment === null) {
+    patch.assignment = null;
+    patch.driver = "None";
+  } else if (assignment !== undefined) {
+    const { assignment: clean, error } = cleanAssignment(assignment);
+    if (error) return res.status(400).json({ error });
+    patch.assignment = { ...clean, assignedAt: new Date().toISOString() };
+    patch.driver = clean.driverName;
+  }
 
   const { booking: updated } = patchBooking(id, patch);
 
@@ -313,10 +344,70 @@ export const updateBooking = (req, res) => {
       notifyAdminBookingCancelled(updated); // business inbox: free the vehicle / refund
     }
   }
-  if (driver !== undefined && driver !== existing.driver && driver !== "None") {
+  if (patch.driver !== undefined && patch.driver !== existing.driver && patch.driver !== "None") {
     notifyDriverAssigned(updated);
   }
 
+  res.json(updated);
+};
+
+/**
+ * PATCH /api/bookings/:id/close  (admin only)
+ * Close a finished trip with its actual odometer km. Anything beyond the km the
+ * booked fare covered is billed at the per-km rate (+ GST), along with optional
+ * extra charges and tolls/parking; the result is stored as `tripClosure` and
+ * the booking becomes "Completed". The original `pricing` stays untouched — it
+ * is the pre-invoice; booked fare + tripClosure is the post-trip invoice.
+ * Closing again replaces the previous closure (corrections).
+ *
+ * body: { actualKm, includedKm?, extraKmRate?, otherAmount?, otherLabel?, tolls? }
+ */
+export const closeTrip = (req, res) => {
+  const { id } = req.params;
+  const body = req.body || {};
+
+  const existing = getBookingById(id);
+  if (!existing) return res.status(404).json({ error: "Booking not found" });
+  if (existing.status === "Cancelled") {
+    return res.status(409).json({ error: "A cancelled booking cannot be closed" });
+  }
+
+  const actualKm = Number(body.actualKm);
+  if (!Number.isFinite(actualKm) || actualKm <= 0) {
+    return res.status(400).json({ error: "Enter the actual km driven" });
+  }
+
+  const p = existing.pricing || {};
+  const vehicleRec = existing.vehicleId ? getVehicle(existing.vehicleId) : null;
+  const isHourly = existing.tripKind === "hourly" || !!existing.rental?.kms;
+  const pick = (v, fallback) => (v === undefined || v === null || v === "" ? fallback : Number(v));
+
+  const includedKm = pick(
+    body.includedKm,
+    Number(p.billKm) || Number(existing.rental?.kms) || Number(existing.distanceKm) || 0
+  );
+  // Hourly rentals bill the excess at the vehicle's local "extra km" tariff;
+  // trips at the per-km rate they were priced with.
+  const defaultRate = isHourly
+    ? Number(vehicleRec?.localPricing?.extraKm) || Number(p.perKm) || 0
+    : Number(p.perKm) || Number(vehicleRec?.outstationRate) || 0;
+  const extraKmRate = pick(body.extraKmRate, defaultRate);
+  if (![includedKm, extraKmRate].every((n) => Number.isFinite(n) && n >= 0)) {
+    return res.status(400).json({ error: "Included km and rate must be valid numbers" });
+  }
+  if (actualKm > includedKm && extraKmRate <= 0) {
+    return res.status(400).json({ error: "Enter the extra km rate (₹/km) for this trip" });
+  }
+
+  const closure = quoteTripClosure({
+    includedKm, actualKm, extraKmRate,
+    otherAmount: body.otherAmount,
+    otherLabel: String(body.otherLabel ?? "").slice(0, 80),
+    tolls: body.tolls,
+  });
+  const tripClosure = { ...closure, closedAt: new Date().toISOString(), closedBy: req.auth?.email || "" };
+
+  const { booking: updated } = patchBooking(id, { tripClosure, status: "Completed" });
   res.json(updated);
 };
 
@@ -366,6 +457,32 @@ export const cancelBooking = (req, res) => {
 const EDITABLE_FIELDS = ["fromDate", "toDate", "pickup", "drop", "passengers", "pickupTime", "notes"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Stops are editable where the booking supports them: outstation trip-planner
+// bookings, and classic-form vehicle bookings (no tripKind). Airport, hourly
+// and package bookings have no stops.
+const stopsEditable = (b) =>
+  STOP_TRIP_TYPES.includes(b.tripKind) || (!b.tripKind && b.category !== "package" && !b.packageName);
+
+/**
+ * Edited stop labels -> stored stops. A stop whose label is unchanged keeps its
+ * coordinates; a typed-in one is stored as a label only. Returns
+ * { stops } or { error }.
+ */
+function cleanStops(raw, existing) {
+  if (!Array.isArray(raw)) return { error: "Stops must be a list" };
+  const labels = raw
+    .map((s) => String((typeof s === "string" ? s : s?.label) ?? "").trim().slice(0, 200))
+    .filter(Boolean);
+  if (labels.length > MAX_STOPS) return { error: `You can add up to ${MAX_STOPS} stops` };
+  const known = new Map(
+    (Array.isArray(existing.stops) ? existing.stops : [])
+      .map((s) => (typeof s === "string" ? { label: s } : s))
+      .filter((s) => s?.label)
+      .map((s) => [s.label, s])
+  );
+  return { stops: labels.map((label) => known.get(label) || { label }) };
+}
+
 export const modifyBooking = (req, res) => {
   const { id } = req.params;
   const { role, email } = req.auth;
@@ -390,6 +507,15 @@ export const modifyBooking = (req, res) => {
     if (body[field] === undefined) continue;
     const value = String(body[field]).trim().slice(0, 500);
     if (value !== String(existing[field] ?? "")) patch[field] = value;
+  }
+
+  if (body.stops !== undefined) {
+    const { stops, error } = cleanStops(body.stops, existing);
+    if (error) return res.status(400).json({ error });
+    if (stops.length && !stopsEditable(existing)) {
+      return res.status(400).json({ error: "Stops can't be added to this type of booking" });
+    }
+    if (stops.map((x) => x.label).join("\n") !== stopLabels(existing).join("\n")) patch.stops = stops;
   }
 
   if (patch.fromDate !== undefined || patch.toDate !== undefined) {
@@ -450,9 +576,18 @@ export const getBookingInvoice = (req, res) => {
     console.error("[booking] invoice payment lookup failed:", e.message);
   }
 
-  const html = renderInvoiceHtml(booking, payment);
+  // Pre-invoice = the booked (estimated) fare; post-invoice = the final bill
+  // after the trip, including extra km. Defaults to the latest one available.
+  const requested = String(req.query?.type || "").toLowerCase();
+  const kind = requested === "pre" || requested === "post" ? requested : booking.tripClosure ? "post" : "pre";
+  if (kind === "post" && !booking.tripClosure) {
+    return res.status(409).json({ error: "The final invoice is available once the trip is completed" });
+  }
+
+  const html = renderInvoiceHtml(booking, payment, kind);
+  const fileTag = kind === "post" ? "Final-Invoice" : "Pre-Invoice";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="RoadCruise-Invoice-${booking.id}.html"`);
+  res.setHeader("Content-Disposition", `attachment; filename="RoadCruise-${fileTag}-${booking.id}.html"`);
   res.send(html);
 };
 
@@ -469,11 +604,16 @@ const STATUS_LABELS = {
   Completed: "Completed",
 };
 
-function renderInvoiceHtml(booking, payment) {
+function renderInvoiceHtml(booking, payment, kind = "pre") {
   const brand = notifConfig.branding;
-  const invoiceNumber = payment?.invoiceNumber || `RC-INV-${booking.id}`;
+  const isPost = kind === "post" && !!booking.tripClosure;
+  const closure = isPost ? booking.tripClosure : null;
+  const baseNumber = payment?.invoiceNumber || `RC-INV-${booking.id}`;
+  const invoiceNumber = isPost ? `${baseNumber}-F` : baseNumber;
+  const docTitle = isPost ? "FINAL INVOICE" : "PRE-INVOICE";
   const pricing = pricingOf(booking);
-  const total = Number(pricing.total || booking.fare || 0);
+  const bookedTotal = Number(pricing.total || booking.fare || 0);
+  const total = isPost ? finalTotal(booking) : bookedTotal;
   const paidAmount = payment ? Number(payment.amount || 0) : 0;
   const balance = Math.max(0, Math.round((total - paidAmount) * 100) / 100);
   const statusLabel = STATUS_LABELS[booking.status] || booking.status;
@@ -524,12 +664,50 @@ function renderInvoiceHtml(booking, payment) {
     .join("");
   const hasGst = pricing.gstAmount != null;
 
+  const kmN = (n) => `${Number(n || 0).toLocaleString("en-IN")} km`;
+  const closureRows = closure
+    ? closure.lines
+        .map(
+          (l) => `<tr><td><strong>${esc(l.label)}</strong>${l.detail ? `<small>${esc(l.detail)}</small>` : ""}</td><td class="num">${formatINR(l.amount)}</td></tr>`
+        )
+        .join("")
+    : "";
+
+  // Post-trip invoice: booked fare first, then the extra charges block.
+  const itemsHtml = isPost
+    ? `<table class="items">
+      <thead><tr><th>Booked fare</th><th class="num">Amount</th></tr></thead>
+      <tbody>${lineRows}
+        ${hasGst ? `<tr><td>GST @ ${esc(pricing.gstRate)}%</td><td class="num">${formatINR(pricing.gstAmount)}</td></tr>` : ""}
+        <tr class="sub"><td><strong>Booked total</strong></td><td class="num"><strong>${formatINR(bookedTotal)}</strong></td></tr>
+      </tbody>
+    </table>
+    <table class="items" style="margin-top:18px">
+      <thead><tr><th>Post-trip charges</th><th class="num">Amount</th></tr></thead>
+      <tbody>${closureRows || `<tr><td>No extra km or charges — trip within the booked limits</td><td class="num">${formatINR(0)}</td></tr>`}
+        ${closure.gstAmount > 0 ? `<tr><td>GST @ ${esc(closure.gstRate)}% on extra charges</td><td class="num">${formatINR(closure.gstAmount)}</td></tr>` : ""}
+        <tr class="sub"><td><strong>Post-trip total</strong></td><td class="num"><strong>${formatINR(closure.total)}</strong></td></tr>
+      </tbody>
+    </table>`
+    : `<table class="items">
+      <thead><tr><th>Description</th><th class="num">Amount</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table>`;
+
+  const totalsTop = isPost
+    ? `<div class="kv"><span>Booked total</span><strong>${formatINR(bookedTotal)}</strong></div>
+      <div class="kv"><span>Post-trip charges</span><strong>${formatINR(closure.total)}</strong></div>`
+    : hasGst
+      ? `<div class="kv"><span>Subtotal</span><strong>${formatINR(pricing.subtotal)}</strong></div>
+      <div class="kv"><span>GST @ ${esc(pricing.gstRate)}%</span><strong>${formatINR(pricing.gstAmount)}</strong></div>`
+      : "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Invoice ${esc(invoiceNumber)} — ${esc(brand.companyName)}</title>
+<title>${isPost ? "Final Invoice" : "Pre-Invoice"} ${esc(invoiceNumber)} — ${esc(brand.companyName)}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; background: #f4f4f5; color: #18181b; padding: 24px 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -565,6 +743,8 @@ function renderInvoiceHtml(booking, payment) {
   table.items th.num, td.num { text-align: right; white-space: nowrap; }
   table.items td { font-size: 13px; padding: 11px 0; border-bottom: 1px solid #f0f0f1; vertical-align: top; }
   table.items td small { display: block; font-size: 11.5px; color: #71717a; margin-top: 2px; }
+  table.items tr.sub td { border-bottom: 0; background: #fafafa; }
+  .note { margin: 0 36px 18px; padding: 10px 14px; border-radius: 10px; background: #fefce8; border: 1px solid #fde68a; font-size: 11.5px; color: #713f12; line-height: 1.5; }
   .totals { margin-left: auto; width: 320px; max-width: 100%; margin-top: 10px; }
   .totals .kv { padding: 6px 0; font-size: 13px; }
   .totals .grand { border-top: 2px solid #d4af37; margin-top: 6px; padding-top: 10px; font-size: 16px; }
@@ -629,7 +809,7 @@ function renderInvoiceHtml(booking, payment) {
       ${brand.gstin ? `<br/><strong>GSTIN:</strong> ${esc(brand.gstin)}` : ""}</p>
     </div>
     <div class="doc">
-      <h1>INVOICE</h1>
+      <h1>${docTitle}</h1>
       <p>Invoice No. <strong>${esc(invoiceNumber)}</strong></p>
       ${payment?.receiptNumber ? `<p>Receipt No. <strong>${esc(payment.receiptNumber)}</strong></p>` : ""}
       <p>Invoice Date <strong>${dateLabel(new Date().toISOString())}</strong></p>
@@ -669,18 +849,18 @@ function renderInvoiceHtml(booking, payment) {
     <div class="card">
       <h3>Route</h3>
       ${routeHtml ? `<ol class="route">${routeHtml}</ol>` : `<p style="font-size:12.5px;color:#71717a">—</p>`}
+      ${closure ? `<h3 style="margin-top:12px">Trip Km</h3>
+      ${kv("Km included in fare", kmN(closure.includedKm))}
+      ${kv("Actual km driven", kmN(closure.actualKm))}
+      ${kv("Extra km", closure.extraKm > 0 ? `${kmN(closure.extraKm)} @ ₹${closure.extraKmRate}/km` : "None")}` : ""}
     </div>
   </div>
 
   <div class="section">
-    <table class="items">
-      <thead><tr><th>Description</th><th class="num">Amount</th></tr></thead>
-      <tbody>${lineRows}</tbody>
-    </table>
+    ${itemsHtml}
     <div class="totals">
-      ${hasGst ? `<div class="kv"><span>Subtotal</span><strong>${formatINR(pricing.subtotal)}</strong></div>
-      <div class="kv"><span>GST @ ${esc(pricing.gstRate)}%</span><strong>${formatINR(pricing.gstAmount)}</strong></div>` : ""}
-      <div class="kv grand"><span>Total</span><strong>${formatINR(total)}</strong></div>
+      ${totalsTop}
+      <div class="kv grand"><span>${isPost ? "Final total" : "Estimated total"}</span><strong>${formatINR(total)}</strong></div>
       ${paidAmount > 0 ? `<div class="kv muted"><span>Paid online${payment?.gateway ? ` (${esc(payment.gateway)})` : ""}</span><strong>− ${formatINR(paidAmount)}</strong></div>` : ""}
       <div class="kv"><span>${paidAmount > 0 && balance > 0 ? "Balance to driver" : "Balance due"}</span><strong>${formatINR(balance)}</strong></div>
       ${payment?.gatewayPaymentId ? `<div class="kv muted"><span>Payment ref.</span><strong>${esc(payment.gatewayPaymentId)}</strong></div>` : ""}
@@ -692,10 +872,14 @@ function renderInvoiceHtml(booking, payment) {
     ${booking.exclusions?.length ? `<div class="card"><h3>Not Included</h3><ul>${booking.exclusions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
   </div>` : ""}
 
+  <div class="note">${isPost
+    ? `Final invoice for the completed trip${booking.tripClosure?.closedAt ? ` (closed ${dateLabel(booking.tripClosure.closedAt)})` : ""}. Extra km is billed on the actual odometer reading beyond the km included in the booked fare.`
+    : `This is a pre-invoice for the booked fare. Travel beyond the included km, extra hours, tolls and parking are billed on the final invoice after the trip.`}</div>
+
   <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
   <div class="foot">
     Thank you for travelling with ${esc(legalName)}.<br/>
-    This is a computer-generated invoice for booking ${esc(booking.id)} and does not require a signature.
+    This is a computer-generated ${isPost ? "final invoice" : "pre-invoice"} for booking ${esc(booking.id)} and does not require a signature.
   </div>
 </div>
 </body>
@@ -714,7 +898,9 @@ const EXPORT_COLUMNS = [
   "Booking Ref", "Created At", "Status", "Customer Name", "Phone", "Email",
   "Booking Type", "Item / Package", "Trip Type", "Vehicle", "Pickup", "Stops", "Drop",
   "From Date", "To Date", "Pickup Time", "Rental Duration", "Distance", "Passengers",
-  "Subtotal (INR)", "GST (INR)", "Total (INR)", "Advance (INR)", "Balance (INR)", "Payment Method", "Driver", "Notes",
+  "Subtotal (INR)", "GST (INR)", "Total (INR)", "Advance (INR)", "Balance (INR)", "Payment Method",
+  "Driver", "Driver Phone", "Cab No", "Cab Type", "Payment Mode (driver)",
+  "Actual Km", "Extra Km", "Post-trip Charges (INR)", "Final Total (INR)", "Notes",
 ];
 
 /**
@@ -731,7 +917,11 @@ export const exportBookings = (_req, res) => {
         b.category, b.packageName || b.item, b.tripType, b.vehicle, b.pickup, stopLabels(b).join(" → "), b.drop,
         b.fromDate, b.toDate, b.pickupTime, rentalLabel(b), distanceLabel(b), b.passengers,
         p.subtotal, p.gstAmount ?? "", p.total, Number(b.advanceAmount) || 0, balanceDue(b),
-        b.paymentMethod, b.driver === "None" ? "" : b.driver, b.notes,
+        b.paymentMethod, b.driver === "None" ? "" : b.driver,
+        b.assignment?.driverPhone || "", b.assignment?.cabNumber || "", b.assignment?.vehicleType || "",
+        b.assignment?.paymentMode || "",
+        b.tripClosure?.actualKm ?? "", b.tripClosure?.extraKm ?? "", b.tripClosure?.total ?? "",
+        finalTotal(b), b.notes,
       ].map(safeCell);
     });
   const buf = buildTableWorkbook("Bookings", EXPORT_COLUMNS, rows);

@@ -262,8 +262,51 @@ export function quoteEstimate(amount, label = "Estimated fare") {
   return { pricing: finalize("estimate", [{ key: "estimate", label, detail: "To be confirmed by our team", amount }]), included: [], excluded: [] };
 }
 
+/**
+ * Post-trip charges for a finished ride: the km actually driven beyond what
+ * the booking included, plus anything else the trip ran up. Feeds the final
+ * (post-trip) invoice; the booking's original `pricing` is never rewritten.
+ *
+ *   includedKm   km covered by the booked fare
+ *   actualKm     odometer km the trip really took
+ *   extraKmRate  ₹/km for the excess
+ *   otherAmount  extra hours / night allowance etc. (GST applies)
+ *   tolls        tolls & parking at actuals (passed through, no GST)
+ *
+ * Returns the stored `tripClosure` shape (minus who/when).
+ */
+export function quoteTripClosure({ includedKm, actualKm, extraKmRate, otherAmount = 0, otherLabel = "", tolls = 0 }) {
+  const inc = Math.max(0, Math.round(Number(includedKm) || 0));
+  const act = Math.max(0, Math.round(Number(actualKm) || 0));
+  const rate = Math.max(0, round2(Number(extraKmRate) || 0));
+  const extraKm = Math.max(0, act - inc);
+  const other = Math.max(0, round2(Number(otherAmount) || 0));
+  const tollAmt = Math.max(0, round2(Number(tolls) || 0));
+
+  const taxable = [
+    { key: "extraKm", label: "Extra km", detail: `${km(extraKm)} beyond ${km(inc)} × ₹${rate}/km`, amount: extraKm * rate },
+    { key: "other", label: String(otherLabel || "").trim() || "Additional charges", detail: "", amount: other },
+  ];
+  const { lines, subtotal, gstRate, gstAmount, total } = finalize("closure", taxable);
+  const tollLine = tollAmt > 0
+    ? [{ key: "tolls", label: "Tolls & parking", detail: "At actuals (no GST)", amount: tollAmt }]
+    : [];
+  return {
+    includedKm: inc,
+    actualKm: act,
+    extraKm,
+    extraKmRate: rate,
+    lines: [...lines, ...tollLine],
+    subtotal,
+    gstRate,
+    gstAmount,
+    tolls: tollAmt,
+    total: round2(total + tollAmt),
+  };
+}
+
 export default {
   GST_RATE_PERCENT, TRIP_TYPES, HOURLY_PACKAGES, FARE_RULES, STOP_TRIP_TYPES, MAX_STOPS,
   tripDays, applyGst, quoteVehicleTrip, quotePackage, quoteVehicleIndicative, quoteEstimate, parsePrice,
-  hourlyPackageByKey,
+  hourlyPackageByKey, quoteTripClosure,
 };
