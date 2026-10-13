@@ -6,6 +6,20 @@ import {
 
 const ALL = [Channels.EMAIL, Channels.SMS, Channels.WHATSAPP];
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-20" -> "20 Oct 2026"; anything unparseable is returned as-is. */
+function smsDate(d) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || ""));
+  return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : String(d || "");
+}
+/** Trip dates for an SMS variable: one date, or "<from> to <to>" when they differ. */
+function smsDates(payload) {
+  const from = payload.fromDate || payload.tripDate || "";
+  const to = payload.toDate || "";
+  if (!from) return "—";
+  return to && to !== from ? `${smsDate(from)} to ${smsDate(to)}` : smsDate(from);
+}
+
 /**
  * Default recipient resolver. Pulls channel addresses + identity from a domain
  * payload. Works for booking/customer/payment shapes used across the ERP.
@@ -57,6 +71,10 @@ export function defaultContext(payload = {}) {
       (payload.fromDate && payload.toDate
         ? `${payload.fromDate} → ${payload.toDate}`
         : payload.fromDate || "—"),
+    // Plain-ASCII dates for SMS variables ("20 Oct 2026" or "20 Oct 2026 to
+    // 22 Oct 2026", always <= 30 chars). The "→" in tripDate is not GSM-7, so in
+    // an SMS it would flip the whole message to Unicode and risk a DLT mismatch.
+    smsDates: smsDates(payload),
     tripType: payload.tripType || "—",
     pickup: payload.pickup || payload.from || "—",
     drop: payload.drop || payload.to || "—",

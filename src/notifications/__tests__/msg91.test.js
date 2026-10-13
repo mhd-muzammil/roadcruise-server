@@ -385,12 +385,14 @@ test("booking works through the same mapping once its MSG91 id is configured", a
   await provider.send({
     to: "9876543210",
     event: NotificationEvents.BOOKING_CONFIRMED,
-    context: { bookingId: "RC-1", vehicle: "Innova", tripDate: "12 Aug", driver: "Ravi", paymentAmount: "4500" },
+    context: { bookingId: "RC-1", smsDates: "12 Aug 2026", vehicle: "Innova", driver: "Ravi", paymentAmount: "4500" },
   });
 
+  // The DLT-verified v1.1 template has exactly ##dates## and ##referenceId##.
   const sent = JSON.parse(calls[0].opts.body);
   assert.equal(sent.flow_id, "aaaaaaaaaaaaaaaaaaaaaaaa");
-  assert.equal(sent.recipients[0].bookingId, "RC-1");
+  assert.equal(sent.recipients[0].dates, "12 Aug 2026");
+  assert.equal(sent.recipients[0].referenceId, "RC-1");
 });
 
 test("an event with no approved template never falls back to another one", async () => {

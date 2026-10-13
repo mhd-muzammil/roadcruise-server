@@ -154,15 +154,18 @@ const TEMPLATES = Object.freeze({
     idEnv: "MSG91_BOOKING_TEMPLATE_ID",
     varsEnv: "MSG91_BOOKING_VARS",
     dltTemplateId: "1077397880030911933",
-    // APPROVED ON AIRTEL DLT, NOT YET CREATED IN MSG91. Until the MSG91 panel
-    // issues an id and marks it "Verified by DLT", MSG91_BOOKING_TEMPLATE_ID
-    // stays empty and booking SMS fails safe instead of sending unapproved text.
+    // MSG91 template 6a77077b6c653b141a007e22. Version v1.1 is "Verified by
+    // DLT" (v1.0 is NOT — it must not be the active version). Its content,
+    // verbatim from the MSG91 panel (2026-10-13):
+    //
+    //   Dear customer, your ride booking is confirmed! Dates: ##dates##.
+    //   Reference ID: ##referenceId##. Thank you for choosing us! - KVROCR
+    //
+    // `smsDates` is plain ASCII ("20 Oct 2026" / "20 Oct 2026 to 22 Oct 2026").
+    // Until MSG91_BOOKING_TEMPLATE_ID is set, booking SMS fails safe.
     defaultVars: Object.freeze([
-      Object.freeze({ name: "bookingId", key: "bookingId" }),
-      Object.freeze({ name: "vehicle", key: "vehicle" }),
-      Object.freeze({ name: "tripDate", key: "tripDate" }),
-      Object.freeze({ name: "driver", key: "driver" }),
-      Object.freeze({ name: "paymentAmount", key: "paymentAmount" }),
+      Object.freeze({ name: "dates", key: "smsDates" }),
+      Object.freeze({ name: "referenceId", key: "bookingId" }),
     ]),
   }),
 });

@@ -713,7 +713,11 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
   body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; background: #f4f4f5; color: #18181b; padding: 24px 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .sheet { max-width: 794px; margin: 0 auto; background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; overflow: hidden; }
   .bar { height: 6px; background: linear-gradient(90deg, #b8912a, #d4af37, #b8912a); }
-  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; padding: 28px 36px 22px; border-bottom: 1px solid #f0f0f1; }
+  /* Company details on the left, invoice title + numbers pinned right on the
+     same row. The address wraps inside .co instead of pushing .doc down. */
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding: 28px 36px 22px; border-bottom: 1px solid #f0f0f1; }
+  .co { flex: 1 1 auto; min-width: 0; }
+  .doc { flex: 0 0 auto; }
   .co img { height: 44px; display: block; margin-bottom: 10px; }
   .co h2 { font-size: 17px; letter-spacing: .2px; }
   .co p { font-size: 11.5px; color: #52525b; line-height: 1.6; }
@@ -757,6 +761,7 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
   .print-btn { display: block; margin: 0 36px 26px; width: calc(100% - 72px); padding: 12px; background: #d4af37; color: #18181b; font-weight: 700; font-size: 13px; border: 0; border-radius: 10px; cursor: pointer; }
   @media (max-width: 620px) {
     .head, .section, .foot { padding-left: 18px; padding-right: 18px; }
+    .head { flex-direction: column; gap: 14px; }
     .cols, .notes { grid-template-columns: 1fr; }
     .doc { text-align: left; }
     .print-btn { margin: 0 18px 22px; width: calc(100% - 36px); }
@@ -768,7 +773,8 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
     .sheet { border: 0; border-radius: 0; max-width: none; }
     .print-btn { display: none; }
     .bar { height: 4px; }
-    .head { padding: 10px 4px 10px; gap: 12px; }
+    .head { padding: 10px 4px 10px; gap: 12px; flex-direction: row; }
+    .doc { text-align: right; }
     .co img { height: 34px; margin-bottom: 6px; }
     .co h2 { font-size: 14px; }
     .co p { font-size: 10.5px; line-height: 1.45; }
