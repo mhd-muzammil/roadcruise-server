@@ -234,6 +234,27 @@ export function setMarketingConsent(email, optIn, { source = "unknown", ip = nul
   }));
 }
 
+/**
+ * Self-service profile update (the Profile page). Only these fields: the login
+ * identity (`email`), phone and role never change here — `email` keys every
+ * session and booking, and the phone is the one an OTP proved.
+ *
+ *   name          display name, also the default on new bookings
+ *   contactEmail  where a phone-login account (synthetic @phone.invalid
+ *                 identity) wants booking emails and invoices sent
+ *   billing       { companyName, gstin, address } | null — default GST details
+ *                 for business bookings (already validated by the caller)
+ */
+export function updateProfile(email, { name, contactEmail, billing } = {}) {
+  return mutateUser(email, (u) => ({
+    ...u,
+    ...(name !== undefined ? { name } : {}),
+    ...(contactEmail !== undefined ? { contactEmail } : {}),
+    ...(billing !== undefined ? { billing } : {}),
+    profileUpdatedAt: new Date().toISOString(),
+  }));
+}
+
 export function touchLastLogin(email) {
   return mutateUser(email, (u) => ({ ...u, lastLogin: new Date().toISOString() }));
 }

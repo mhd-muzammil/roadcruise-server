@@ -15,6 +15,7 @@ import { loginLimiter, sensitiveLimiter } from "../core/rateLimiter.js";
  *   Tokens / sessions:
  *     POST /api/auth/refresh                 rotate refresh -> new access+refresh
  *     GET  /api/auth/me                       (auth) current user + permissions
+ *     PATCH /api/auth/profile                 (auth) name, contact email, GST details
  *     POST /api/auth/logout                   (auth) revoke current session
  *     POST /api/auth/logout-all               (auth) revoke all sessions (bumps tokenVersion)
  *     GET  /api/auth/sessions                 (auth) list my active sessions
@@ -38,6 +39,7 @@ router.post("/google", loginLimiter(), ctrl.googleLogin);
 // Tokens / sessions
 router.post("/refresh", loginLimiter(), ctrl.refresh);
 router.get("/me", requireAuth, ctrl.me);
+router.patch("/profile", requireAuth, ctrl.updateMyProfile);
 router.post("/logout", requireAuth, ctrl.logout);
 router.post("/logout-all", requireAuth, ctrl.logoutAll);
 // Marketing consent. Authenticated: consent must be attributable to a real

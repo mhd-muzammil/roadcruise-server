@@ -26,8 +26,12 @@ import { getVehicle, listVehicles } from "../db/vehicles.db.js";
 import { buildTableWorkbook } from "../notifications/broadcast/consentExport.js";
 import {
   TRIP_TYPES, GST_RATE_PERCENT, STOP_TRIP_TYPES, MAX_STOPS,
-  quotePackage, quoteVehicleIndicative, quoteEstimate, quoteTripClosure,
+  quotePackage, quoteVehicleIndicative, quoteEstimate, quoteTripClosure, applyCoupon,
 } from "../services/pricing.js";
+import { cleanBilling, gstSplit } from "../services/billing.js";
+import { checkCoupon } from "./coupon.controller.js";
+import { recordRedemption, releaseRedemption } from "../db/coupons.db.js";
+import { findByEmail, updateProfile } from "../auth/core/userService.js";
 import { normalizeTrip, daysForTrip, routeForTrip, quoteTripVehicle } from "../services/tripQuote.js";
 import {
   formatINR, pricingOf, stopLabels, rentalLabel, distanceLabel, balanceDue, finalTotal,
@@ -168,10 +172,30 @@ export const createBooking = async (req, res) => {
   const quote = await priceBookingRequest(body, pkg);
   if (quote.error) return res.status(quote.status).json({ error: quote.error });
   const { priced, trip, route, vehicleRec } = quote;
+  const estimateOnly = priced.pricing.source === "estimate";
+
+  // Coupon: re-checked here against the SERVER's price, whatever the checkout
+  // preview said. The discount comes off the pre-GST subtotal.
+  let pricing = priced.pricing;
+  let couponUsed = null;
+  if (String(body.couponCode || "").trim()) {
+    if (estimateOnly) return res.status(400).json({ error: "Coupons can't be used on an estimated fare" });
+    const gross = pricing.lines.reduce((s, l) => s + Number(l.amount || 0), 0);
+    const { coupon, error } = checkCoupon(body.couponCode, { gross, email: req.auth.email });
+    if (error) return res.status(400).json({ error });
+    pricing = applyCoupon(pricing, coupon);
+    couponUsed = coupon;
+  }
+
+  // Corporate GST details for the tax invoice (optional). Saved to the profile
+  // as the default for next time unless the customer unticked that.
+  const { billing, error: billingError } = cleanBilling(body.billing);
+  if (billingError) return res.status(400).json({ error: billingError });
+  if (billing && body.saveBilling !== false) updateProfile(req.auth.email, { billing });
+
   // The GST-inclusive total is what's charged; payments, analytics and the
   // invoice all read it from `fare`.
-  const amount = priced.pricing.total;
-  const estimateOnly = priced.pricing.source === "estimate";
+  const amount = pricing.total;
 
   const paymentsEnabled = paymentConfig.enabled;
   const wantsOnline = (reqMode || "online") !== "arrival";
@@ -197,6 +221,9 @@ export const createBooking = async (req, res) => {
   const booking = {
     id: newBookingId(),
     customerEmail: req.auth.email, // owner — used for access control + "my bookings"
+    // A phone-login account's real address (its identity is a synthetic
+    // @phone.invalid one): booking emails and the invoice go here instead.
+    contactEmail: findByEmail(req.auth.email)?.contactEmail || "",
     name: name || req.auth.user?.name || req.auth.email,
     phone: phone || req.auth.user?.phone || "",
     fromDate: trip ? trip.date : body.fromDate,
@@ -208,9 +235,12 @@ export const createBooking = async (req, res) => {
     item: trip ? vehicleRec.name : body.item,
     // GST-inclusive total payable (= pricing.total).
     fare: amount,
-    // Itemised breakdown — lines, subtotal, GST, total — rendered verbatim by
-    // My Bookings, the admin log, notifications and the invoice.
-    pricing: priced.pricing,
+    // Itemised breakdown — lines, subtotal, GST, total (and any coupon
+    // discount) — rendered verbatim by My Bookings, the admin log,
+    // notifications and the invoice.
+    pricing,
+    // Business customer's GST details: { companyName, gstin, address } or null.
+    billing,
     inclusions: priced.included || [],
     exclusions: priced.excluded || [],
     // Deposit plan (0 advanceAmount = pay in full). balance = fare - advance is
@@ -252,6 +282,9 @@ export const createBooking = async (req, res) => {
   };
 
   insertBooking(booking);
+  if (couponUsed) {
+    recordRedemption({ couponId: couponUsed.id, bookingId: booking.id, email: req.auth.email, discount: pricing.discount });
+  }
 
   if (online) {
     try {
@@ -340,6 +373,7 @@ export const updateBooking = (req, res) => {
   if (status !== undefined && status !== existing.status) {
     if (status === "Approved") notifyBookingConfirmed(updated);
     else if (status === "Cancelled") {
+      releaseRedemption(id);
       notifyBookingCancelled(updated);      // customer: "your booking is cancelled"
       notifyAdminBookingCancelled(updated); // business inbox: free the vehicle / refund
     }
@@ -360,7 +394,9 @@ export const updateBooking = (req, res) => {
  * is the pre-invoice; booked fare + tripClosure is the post-trip invoice.
  * Closing again replaces the previous closure (corrections).
  *
- * body: { actualKm, includedKm?, extraKmRate?, otherAmount?, otherLabel?, tolls? }
+ * body: { actualKm, includedKm?, extraKmRate?, otherAmount?, otherLabel?, tolls?, paymentMode? }
+ * paymentMode is how the customer settled the final bill (Cash, UPI, ...);
+ * the final invoice prints it.
  */
 export const closeTrip = (req, res) => {
   const { id } = req.params;
@@ -405,9 +441,54 @@ export const closeTrip = (req, res) => {
     otherLabel: String(body.otherLabel ?? "").slice(0, 80),
     tolls: body.tolls,
   });
-  const tripClosure = { ...closure, closedAt: new Date().toISOString(), closedBy: req.auth?.email || "" };
+  const tripClosure = {
+    ...closure,
+    paymentMode: String(body.paymentMode ?? "").trim().slice(0, 40),
+    closedAt: new Date().toISOString(),
+    closedBy: req.auth?.email || "",
+  };
 
   const { booking: updated } = patchBooking(id, { tripClosure, status: "Completed" });
+  res.json(updated);
+};
+
+/**
+ * PATCH /api/bookings/:id/invoice  (admin only)
+ * Hand-edit what the invoices print — invoice numbers and dates, the
+ * billed-to party (name, contact, company, GSTIN, address) and a note. Stored
+ * as `invoiceEdits` overrides; an empty value falls back to the generated
+ * default. Amounts are NOT editable here: they come from the booking's
+ * pricing, coupon and trip closure, so the invoice always matches what the
+ * customer was charged.
+ */
+const INVOICE_EDIT_FIELDS = {
+  invoiceNumber: 40, invoiceDate: 10, finalInvoiceNumber: 40, finalInvoiceDate: 10,
+  name: 80, phone: 20, email: 120, companyName: 120, gstin: 15, address: 300, note: 500,
+};
+export const editInvoice = (req, res) => {
+  const existing = getBookingById(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Booking not found" });
+  const body = req.body || {};
+  const { editedAt: _a, editedBy: _b, ...edits } = existing.invoiceEdits || {};
+  for (const [k, max] of Object.entries(INVOICE_EDIT_FIELDS)) {
+    if (body[k] === undefined) continue;
+    const v = String(body[k] ?? "").trim().slice(0, max);
+    if (v) edits[k] = v;
+    else delete edits[k];
+  }
+  if (edits.gstin) {
+    edits.gstin = edits.gstin.replace(/\s+/g, "").toUpperCase();
+    if (!cleanBilling({ gstin: edits.gstin, companyName: "x" }).billing) {
+      return res.status(400).json({ error: "Enter a valid 15-character GSTIN" });
+    }
+  }
+  for (const k of ["invoiceDate", "finalInvoiceDate"]) {
+    if (edits[k] && !DATE_RE.test(edits[k])) return res.status(400).json({ error: "Invoice dates must be valid dates" });
+  }
+  const patch = Object.keys(edits).length
+    ? { invoiceEdits: { ...edits, editedAt: new Date().toISOString(), editedBy: req.auth?.email || "" } }
+    : { invoiceEdits: null };
+  const { booking: updated } = patchBooking(existing.id, patch);
   res.json(updated);
 };
 
@@ -440,6 +521,7 @@ export const cancelBooking = (req, res) => {
   }
 
   const { booking: updated } = patchBooking(id, { status: "Cancelled" });
+  releaseRedemption(id);
   notifyBookingCancelled(updated);      // customer: "your booking is cancelled"
   notifyAdminBookingCancelled(updated); // business inbox: free the vehicle / refund
   res.json(updated);
@@ -608,8 +690,37 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
   const brand = notifConfig.branding;
   const isPost = kind === "post" && !!booking.tripClosure;
   const closure = isPost ? booking.tripClosure : null;
+  // Admin hand-edits (PATCH /:id/invoice) override the generated values.
+  const edits = booking.invoiceEdits || {};
   const baseNumber = payment?.invoiceNumber || `RC-INV-${booking.id}`;
-  const invoiceNumber = isPost ? `${baseNumber}-F` : baseNumber;
+  const invoiceNumber = isPost
+    ? edits.finalInvoiceNumber || `${edits.invoiceNumber || baseNumber}-F`
+    : edits.invoiceNumber || baseNumber;
+  const invoiceDate = (isPost ? edits.finalInvoiceDate : edits.invoiceDate) || new Date().toISOString();
+  // Billed-to party: admin edit > the booking's GST details > the booking.
+  const billing = booking.billing || {};
+  const billedTo = {
+    name: edits.name || booking.name || "—",
+    phone: edits.phone || booking.phone,
+    email: edits.email || booking.contactEmail ||
+      (/@phone\.invalid$/.test(booking.customerEmail || "") ? "" : booking.customerEmail),
+    companyName: edits.companyName || billing.companyName || "",
+    gstin: edits.gstin || billing.gstin || "",
+    address: edits.address || billing.address || "",
+  };
+  // B2B: split GST by place of supply (the customer's GSTIN state).
+  const split = gstSplit(billedTo.gstin);
+  const gstRows = (rate, amount, suffix = "") => {
+    const r = Number(rate);
+    if (split === "intra") {
+      const half = Math.round((Number(amount) / 2) * 100) / 100;
+      return [
+        [`CGST @ ${r / 2}%${suffix}`, half],
+        [`SGST @ ${r / 2}%${suffix}`, Math.round((Number(amount) - half) * 100) / 100],
+      ];
+    }
+    return [[`${split === "inter" ? "IGST" : "GST"} @ ${r}%${suffix}`, Number(amount)]];
+  };
   const docTitle = isPost ? "FINAL INVOICE" : "PRE-INVOICE";
   const pricing = pricingOf(booking);
   const bookedTotal = Number(pricing.total || booking.fare || 0);
@@ -657,12 +768,20 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
     .map((p) => `<li><span class="rk">${esc(p.kind)}</span><span class="rl">${esc(p.label)}</span></li>`)
     .join("");
 
+  const discount = Number(pricing.discount) || 0;
+  const discountRow = discount > 0
+    ? `<tr><td><strong>Coupon discount</strong><small>${esc(pricing.coupon?.code || "")}${pricing.coupon?.type === "percent" ? ` · ${esc(pricing.coupon.value)}% off` : ""}</small></td><td class="num">− ${formatINR(discount)}</td></tr>`
+    : "";
   const lineRows = pricing.lines
     .map(
       (l) => `<tr><td><strong>${esc(l.label)}</strong>${l.detail ? `<small>${esc(l.detail)}</small>` : ""}</td><td class="num">${formatINR(l.amount)}</td></tr>`
     )
-    .join("");
+    .join("") + discountRow;
   const hasGst = pricing.gstAmount != null;
+  const gstTableRows = (rate, amount, suffix) =>
+    gstRows(rate, amount, suffix).map(([label, amt]) => `<tr><td>${esc(label)}</td><td class="num">${formatINR(amt)}</td></tr>`).join("");
+  const gstKv = (rate, amount) =>
+    gstRows(rate, amount).map(([label, amt]) => `<div class="kv"><span>${esc(label)}</span><strong>${formatINR(amt)}</strong></div>`).join("");
 
   const kmN = (n) => `${Number(n || 0).toLocaleString("en-IN")} km`;
   const closureRows = closure
@@ -678,14 +797,14 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
     ? `<table class="items">
       <thead><tr><th>Booked fare</th><th class="num">Amount</th></tr></thead>
       <tbody>${lineRows}
-        ${hasGst ? `<tr><td>GST @ ${esc(pricing.gstRate)}%</td><td class="num">${formatINR(pricing.gstAmount)}</td></tr>` : ""}
+        ${hasGst ? gstTableRows(pricing.gstRate, pricing.gstAmount, "") : ""}
         <tr class="sub"><td><strong>Booked total</strong></td><td class="num"><strong>${formatINR(bookedTotal)}</strong></td></tr>
       </tbody>
     </table>
     <table class="items" style="margin-top:18px">
       <thead><tr><th>Post-trip charges</th><th class="num">Amount</th></tr></thead>
       <tbody>${closureRows || `<tr><td>No extra km or charges — trip within the booked limits</td><td class="num">${formatINR(0)}</td></tr>`}
-        ${closure.gstAmount > 0 ? `<tr><td>GST @ ${esc(closure.gstRate)}% on extra charges</td><td class="num">${formatINR(closure.gstAmount)}</td></tr>` : ""}
+        ${closure.gstAmount > 0 ? gstTableRows(closure.gstRate, closure.gstAmount, " on extra charges") : ""}
         <tr class="sub"><td><strong>Post-trip total</strong></td><td class="num"><strong>${formatINR(closure.total)}</strong></td></tr>
       </tbody>
     </table>`
@@ -694,12 +813,17 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
       <tbody>${lineRows}</tbody>
     </table>`;
 
+  // The final invoice already charges the extra km, so it isn't "not included".
+  const exclusions = (booking.exclusions || []).filter(
+    (x) => !(isPost && /^(Travel beyond|Extra km)/i.test(String(x)))
+  );
+
   const totalsTop = isPost
     ? `<div class="kv"><span>Booked total</span><strong>${formatINR(bookedTotal)}</strong></div>
       <div class="kv"><span>Post-trip charges</span><strong>${formatINR(closure.total)}</strong></div>`
     : hasGst
-      ? `<div class="kv"><span>Subtotal</span><strong>${formatINR(pricing.subtotal)}</strong></div>
-      <div class="kv"><span>GST @ ${esc(pricing.gstRate)}%</span><strong>${formatINR(pricing.gstAmount)}</strong></div>`
+      ? `<div class="kv"><span>${discount > 0 ? "Taxable value (after discount)" : "Subtotal"}</span><strong>${formatINR(pricing.subtotal)}</strong></div>
+      ${gstKv(pricing.gstRate, pricing.gstAmount)}`
       : "";
 
   return `<!doctype html>
@@ -818,7 +942,7 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
       <h1>${docTitle}</h1>
       <p>Invoice No. <strong>${esc(invoiceNumber)}</strong></p>
       ${payment?.receiptNumber ? `<p>Receipt No. <strong>${esc(payment.receiptNumber)}</strong></p>` : ""}
-      <p>Invoice Date <strong>${dateLabel(new Date().toISOString())}</strong></p>
+      <p>Invoice Date <strong>${dateLabel(invoiceDate)}</strong></p>
       <p>Booking ID <strong>${esc(booking.id)}</strong></p>
     </div>
   </div>
@@ -826,9 +950,13 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
   <div class="section cols">
     <div class="card">
       <h3>Billed To</h3>
-      ${kv("Name", booking.name || "—")}
-      ${kv("Phone", booking.phone)}
-      ${kv("Email", /@phone\.invalid$/.test(booking.customerEmail || "") ? "" : booking.customerEmail)}
+      ${kv("Company", billedTo.companyName)}
+      ${kv("GSTIN", billedTo.gstin)}
+      ${billedTo.gstin ? kv("Place of supply", `${billedTo.gstin.slice(0, 2)}${split === "intra" ? " (Tamil Nadu)" : ""}`) : ""}
+      ${kv(billedTo.companyName ? "Contact" : "Name", billedTo.name)}
+      ${kv("Phone", billedTo.phone)}
+      ${kv("Email", billedTo.email)}
+      ${billedTo.address ? `<div class="kv"><span>Address</span><strong>${esc(billedTo.address)}</strong></div>` : ""}
     </div>
     <div class="card">
       <h3>Booking</h3>
@@ -836,6 +964,7 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
       <div class="kv"><span>Booking status</span><strong><span class="badge ${booking.status === "Cancelled" ? "no" : booking.status === "Approved" || booking.status === "Completed" ? "ok" : ""}">${esc(statusLabel)}</span></strong></div>
       <div class="kv"><span>Payment status</span><strong><span class="badge ${paymentStatus === "Paid" ? "ok" : ""}">${esc(paymentStatus)}</span></strong></div>
       ${kv("Payment method", booking.paymentMethod)}
+      ${isPost ? kv("Final bill paid via", closure.paymentMode) : ""}
     </div>
   </div>
 
@@ -873,14 +1002,14 @@ function renderInvoiceHtml(booking, payment, kind = "pre") {
     </div>
   </div>
 
-  ${(booking.inclusions?.length || booking.exclusions?.length) ? `<div class="section notes">
+  ${(booking.inclusions?.length || exclusions.length) ? `<div class="section notes">
     ${booking.inclusions?.length ? `<div class="card"><h3>Included</h3><ul>${booking.inclusions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "<div></div>"}
-    ${booking.exclusions?.length ? `<div class="card"><h3>Not Included</h3><ul>${booking.exclusions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    ${exclusions.length ? `<div class="card"><h3>Not Included</h3><ul>${exclusions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
   </div>` : ""}
 
   <div class="note">${isPost
     ? `Final invoice for the completed trip${booking.tripClosure?.closedAt ? ` (closed ${dateLabel(booking.tripClosure.closedAt)})` : ""}. Extra km is billed on the actual odometer reading beyond the km included in the booked fare.`
-    : `This is a pre-invoice for the booked fare. Travel beyond the included km, extra hours, tolls and parking are billed on the final invoice after the trip.`}</div>
+    : `This is a pre-invoice for the booked fare. Travel beyond the included km, extra hours, tolls and parking are billed on the final invoice after the trip.`}${edits.note ? `<br/>${esc(edits.note)}` : ""}</div>
 
   <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
   <div class="foot">
@@ -907,6 +1036,7 @@ const EXPORT_COLUMNS = [
   "Subtotal (INR)", "GST (INR)", "Total (INR)", "Advance (INR)", "Balance (INR)", "Payment Method",
   "Driver", "Driver Phone", "Cab No", "Cab Type", "Payment Mode (driver)",
   "Actual Km", "Extra Km", "Post-trip Charges (INR)", "Final Total (INR)", "Notes",
+  "Company", "GSTIN", "Coupon", "Discount (INR)", "Final Bill Paid Via",
 ];
 
 /**
@@ -928,6 +1058,8 @@ export const exportBookings = (_req, res) => {
         b.assignment?.paymentMode || "",
         b.tripClosure?.actualKm ?? "", b.tripClosure?.extraKm ?? "", b.tripClosure?.total ?? "",
         finalTotal(b), b.notes,
+        b.invoiceEdits?.companyName || b.billing?.companyName || "", b.invoiceEdits?.gstin || b.billing?.gstin || "",
+        p.coupon?.code || "", Number(p.discount) || "", b.tripClosure?.paymentMode || "",
       ].map(safeCell);
     });
   const buf = buildTableWorkbook("Bookings", EXPORT_COLUMNS, rows);

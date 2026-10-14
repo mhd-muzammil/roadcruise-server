@@ -1,7 +1,8 @@
 import { getAuthService } from "../core/AuthService.js";
 import { issueNonce, consumeNonce } from "../core/nonceStore.js";
 import { config, googleMode, publicGoogleClientId } from "../config/auth.config.js";
-import { sanitize, setMarketingConsent, attachPhoneIfMissing, normalizePhone } from "../core/userService.js";
+import { sanitize, setMarketingConsent, attachPhoneIfMissing, normalizePhone, updateProfile } from "../core/userService.js";
+import { cleanBilling } from "../../services/billing.js";
 import { permissionsFor } from "../rbac/roles.js";
 
 const service = () => getAuthService();
@@ -84,6 +85,35 @@ export const refresh = async (req, res) => {
 export const me = (req, res) => {
   const user = req.auth.user;
   res.json({ ...sanitize(user), permissions: permissionsFor(user.role), sessionId: req.auth.sid });
+};
+
+// PATCH /api/auth/profile  (requireAuth) — the Profile page
+// body: { name?, contactEmail?, billing?: { companyName, gstin, address } | null }
+// Returns the updated user, flattened like /me.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const updateMyProfile = (req, res) => {
+  const body = req.body || {};
+  const changes = {};
+  if (body.name !== undefined) {
+    const name = String(body.name).trim().slice(0, 80);
+    if (name.length < 2) return res.status(400).json({ error: "Enter your name" });
+    changes.name = name;
+  }
+  if (body.contactEmail !== undefined) {
+    const contactEmail = String(body.contactEmail || "").trim().toLowerCase().slice(0, 120);
+    if (contactEmail && (!EMAIL_RE.test(contactEmail) || contactEmail.endsWith(".invalid"))) {
+      return res.status(400).json({ error: "Enter a valid email address" });
+    }
+    changes.contactEmail = contactEmail;
+  }
+  if (body.billing !== undefined) {
+    const { billing, error } = cleanBilling(body.billing);
+    if (error) return res.status(400).json({ error });
+    changes.billing = billing;
+  }
+  const updated = updateProfile(req.auth.email, changes);
+  if (!updated) return res.status(404).json({ error: "Account not found" });
+  res.json({ ...sanitize(updated), permissions: permissionsFor(updated.role) });
 };
 
 // POST /api/auth/logout  (requireAuth) — current session

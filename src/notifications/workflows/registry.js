@@ -31,7 +31,9 @@ export function defaultRecipients(payload = {}) {
     customerId: payload.customerId ?? payload.userId ?? payload.email ?? null,
     name: payload.name || payload.customerName || "Customer",
     // Keys MUST match channel names — the engine looks up recipients[channel].
-    email: payload.email || payload.customerEmail || null,
+    // contactEmail: a phone-login customer's real address (their account
+    // identity is a synthetic @phone.invalid one that must never be mailed).
+    email: payload.contactEmail || payload.email || payload.customerEmail || null,
     sms: phone,
     // WhatsApp uses the phone number unless a dedicated wa id is provided.
     whatsapp: payload.whatsapp || phone,

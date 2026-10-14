@@ -10,6 +10,7 @@ import promoRoutes from "./routes/promo.routes.js";
 import packageRoutes from "./routes/package.routes.js";
 import consentRoutes from "./routes/consent.routes.js";
 import placesRoutes from "./routes/places.routes.js";
+import couponRoutes from "./routes/coupon.routes.js";
 import { UPLOAD_DIR, UPLOAD_ROUTE } from "./uploads/index.js";
 import notifications from "./notifications/index.js";
 import { startTripReminderScheduler } from "./notifications/scheduler/tripReminders.js";
@@ -45,6 +46,7 @@ app.use("/api/promos", promoRoutes);
 app.use("/api/packages", packageRoutes);
 app.use("/api/consent", consentRoutes);
 app.use("/api/places", placesRoutes);
+app.use("/api/coupons", couponRoutes);
 
 // Serve admin-uploaded media (vehicle photos/videos + gallery). Read-only static
 // mount; files live on durable storage under DATA_DIR/uploads (see uploads/index.js).

@@ -305,8 +305,41 @@ export function quoteTripClosure({ includedKm, actualKm, extraKmRate, otherAmoun
   };
 }
 
+/**
+ * Discount a coupon gives on a booking subtotal (pre-GST). Percent coupons can
+ * be capped by maxDiscount; the discount never exceeds the subtotal.
+ * coupon: { type: "percent" | "flat", value, maxDiscount? }
+ */
+export function couponDiscount(subtotal, coupon) {
+  const base = Math.max(0, Number(subtotal) || 0);
+  const value = Math.max(0, Number(coupon?.value) || 0);
+  let off = coupon?.type === "percent" ? (base * value) / 100 : value;
+  const cap = Number(coupon?.maxDiscount) || 0;
+  if (coupon?.type === "percent" && cap > 0) off = Math.min(off, cap);
+  return round2(Math.min(base, Math.floor(off)));
+}
+
+/**
+ * Apply a coupon to a stored pricing breakdown. The discount comes off the
+ * taxable subtotal BEFORE GST (a discount given at the time of supply reduces
+ * the value GST is charged on), so GST and the total are recomputed. The
+ * charge lines stay as they were; the discount is recorded alongside them.
+ */
+export function applyCoupon(pricing, coupon) {
+  const gross = round2(pricing.lines.reduce((s, l) => s + Number(l.amount || 0), 0));
+  const discount = couponDiscount(gross, coupon);
+  if (discount <= 0) return pricing;
+  return {
+    ...pricing,
+    grossSubtotal: gross,
+    discount,
+    coupon: { code: coupon.code, type: coupon.type, value: coupon.value },
+    ...applyGst(gross - discount),
+  };
+}
+
 export default {
   GST_RATE_PERCENT, TRIP_TYPES, HOURLY_PACKAGES, FARE_RULES, STOP_TRIP_TYPES, MAX_STOPS,
   tripDays, applyGst, quoteVehicleTrip, quotePackage, quoteVehicleIndicative, quoteEstimate, parsePrice,
-  hourlyPackageByKey, quoteTripClosure,
+  hourlyPackageByKey, quoteTripClosure, couponDiscount, applyCoupon,
 };
