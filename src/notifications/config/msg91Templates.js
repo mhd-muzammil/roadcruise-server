@@ -168,6 +168,33 @@ const TEMPLATES = Object.freeze({
       Object.freeze({ name: "referenceId", key: "bookingId" }),
     ]),
   }),
+
+  [NotificationEvents.DRIVER_ASSIGNED]: Object.freeze({
+    constName: "DRIVER_ASSIGNED",
+    msg91Name: "DRIVER_ASSIGNED",
+    idEnv: "MSG91_DRIVER_TEMPLATE_ID",
+    varsEnv: "MSG91_DRIVER_VARS",
+    dltTemplateId: "1077443110071491222",
+    // Airtel DLT "Driver_Vehicle_Assigning" (header KVROCR, Service Implicit,
+    // registered 13/10/2026), verbatim:
+    //
+    //   Dear Customer, your Road Cruise cab booking is confirmed and a driver
+    //   has been assigned. Driver Name: {#alp#}, Driver Mobile: {#num#}, Cab
+    //   Number: {#alp#}. Your driver will contact you before the pickup time.
+    //   Please check the cab number before boarding. For any help call
+    //   7338899062. Thank you - KVROCR
+    //
+    // MSG91 template 6ad062a48ce28a6869015f82 (DRIVER_ASSIGNED v1.0) names
+    // the slots ##driverName##, ##driverMobile##, ##cabNumber##.
+    // `driver`/`driverPhone`/`cabNumber` come from the admin's cab + driver
+    // assignment. VERIFY the ##names## against the MSG91 panel; override with
+    // MSG91_DRIVER_VARS. Until MSG91_DRIVER_TEMPLATE_ID is set, it fails safe.
+    defaultVars: Object.freeze([
+      Object.freeze({ name: "driverName", key: "driver" }),
+      Object.freeze({ name: "driverMobile", key: "driverPhone" }),
+      Object.freeze({ name: "cabNumber", key: "cabNumber" }),
+    ]),
+  }),
 });
 
 /**
