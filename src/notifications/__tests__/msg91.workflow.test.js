@@ -249,3 +249,34 @@ test("booking SMS being unavailable does not stop the booking's email/WhatsApp",
   assert.ok(channels.includes(Channels.EMAIL), "email must still be queued");
   assert.ok(channels.includes(Channels.WHATSAPP), "whatsapp must still be queued");
 });
+
+// -------------------- events with no DLT template skip SMS --------------------
+test("an event with no MSG91 template skips SMS at enqueue (no dead letter, no alert)", async () => {
+  const service = new NotificationService({ repository: repo, queue: fakeQueue, dispatcher });
+  const created = await service.handleEvent({
+    event: NotificationEvents.BOOKING_CREATED,
+    eventId: uid("evt"),
+    payload: {
+      bookingId: uid("bk"),
+      email: "customer@test.local",
+      phone: "9876543210",
+      name: "Arjun",
+    },
+    actor: "test",
+  });
+
+  const channels = created.map((r) => r.channel);
+  assert.ok(!channels.includes(Channels.SMS), "no SMS record for an unmapped event");
+  assert.ok(channels.includes(Channels.EMAIL), "email must still be queued");
+});
+
+test("a MAPPED event with an unset template id still queues SMS (fails loudly)", async () => {
+  const service = new NotificationService({ repository: repo, queue: fakeQueue, dispatcher });
+  const created = await service.handleEvent({
+    event: NotificationEvents.BOOKING_CONFIRMED,
+    eventId: uid("evt"),
+    payload: { bookingId: uid("bk"), phone: "9876543210", name: "Arjun" },
+    actor: "test",
+  });
+  assert.ok(created.some((r) => r.channel === Channels.SMS));
+});

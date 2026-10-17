@@ -3,7 +3,8 @@ import { idempotencyKey } from "./idempotency.js";
 import { validateRecipient } from "./validate.js";
 import { getWorkflow } from "../workflows/registry.js";
 import { channelEnabled, default as config } from "../config/notification.config.js";
-import { DeliveryStatus, ALL_EVENTS } from "../config/events.js";
+import { DeliveryStatus, ALL_EVENTS, Channels } from "../config/events.js";
+import { msg91TemplateFor } from "../config/msg91Templates.js";
 import { metrics } from "../observability/metrics.js";
 import { auditLog } from "../audit/AuditLog.js";
 
@@ -91,6 +92,26 @@ export class NotificationService {
         continue;
       }
       const address = valid.normalized;
+
+      // MSG91 sends only DLT-approved templates. An event with NO template mapped
+      // at all (booking.created, payment.*, ...) can never be delivered, so skip
+      // it (auditable) instead of dead-lettering and alerting on every booking.
+      // A mapped template whose id is unset still queues and fails loudly.
+      if (
+        channel === Channels.SMS &&
+        config.providers[channel] === "msg91" &&
+        !msg91TemplateFor(event)
+      ) {
+        await auditLog.record({
+          action: "skipped",
+          event,
+          channel,
+          actor,
+          result: "no_dlt_template",
+          detail: { eventId },
+        });
+        continue;
+      }
 
       // Business key from the RAW payload (domain truth), never the template
       // context: defaultContext() fills bookingId with a "—" placeholder for
